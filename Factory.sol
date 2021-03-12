@@ -1437,7 +1437,7 @@ contract Constants {
     bytes32 internal constant _minSignatures_   = 'minSignatures';
     bytes32 internal constant _uniswapRounter_  = 'uniswapRounter';
     
-    function chainId() public pure returns (uint id) {
+    function _chainId() internal pure returns (uint id) {
         assembly { id := chainid() }
     }
 }
@@ -1565,17 +1565,17 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
 contract TokenMapped is MappingBase {
     using SafeERC20 for IERC20;
     
-	function __TokenMapped_init(address token_) external initializer {
+	function __TokenMapped_init(address factory_, address token_) external initializer {
         __Context_init_unchained();
-		__TokenMapped_init_unchained(token_);
+		__TokenMapped_init_unchained(factory_, token_);
 	}
 	
-	function __TokenMapped_init_unchained(address token_) public initializer {
-        factory = _msgSender();
-        mainChainId = chainId();
+	function __TokenMapped_init_unchained(address factory_, address token_) public initializer {
+        factory = factory_;
+        mainChainId = _chainId();
         token = token_;
         creator = address(0);
-        _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(ERC20UpgradeSafe(token).name())), chainId(), address(this)));
+        _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(ERC20UpgradeSafe(token).name())), _chainId(), address(this)));
 	}
 	
     function totalMapped() virtual public view returns (uint) {
@@ -1631,10 +1631,10 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
 	
 	function __MappableToken_init_unchained(address creator_) public initializer {
         factory = _msgSender();
-        mainChainId = chainId();
+        mainChainId = _chainId();
         token = address(0);
         creator = creator_;
-        _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), chainId(), address(this)));
+        _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), _chainId(), address(this)));
 	}
 	
     function DOMAIN_SEPARATOR() virtual override(Permit, MappingBase) public view returns (bytes32) {
@@ -1675,7 +1675,7 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
         mainChainId = mainChainId_;
         token = token_;
         creator = (token_ == address(0)) ? creator_ : address(0);
-        _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), chainId(), address(this)));
+        _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), _chainId(), address(this)));
 	}
 	
     function DOMAIN_SEPARATOR() virtual override(Permit, MappingBase) public view returns (bytes32) {
@@ -1735,7 +1735,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         config[_minSignatures_]                 = 3;
         config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
-        DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), chainId(), address(this)));
+        DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
         upgradeProductImplementationsTo(_implTokenMapped, _implMappableToken, _implMappingToken);
     }
 
@@ -1855,13 +1855,13 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
     }
     
     function registerSupportChainId(uint chainId_) virtual external governance {
-        require(chainId() == 1 || chainId() == 3, 'called only on ethereum mainnet');
+        require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
         require(!isSupportChainId(chainId_), 'support chainId already');
         supportChainIds.push(chainId_);
     }
     
     function _registerMapping(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual internal {
-        require(chainId() == 1 || chainId() == 3, 'called only on ethereum mainnet');
+        require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
         require(chainIds.length == mappingTokenMappeds_.length, 'two array lenth not equal');
         require(isSupportChainId(mainChainId), 'Not support mainChainId');
         for(uint i=0; i<chainIds.length; i++) {
@@ -1919,10 +1919,10 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
     }
 
     function registerCertified(string memory symbol, uint mainChainId, address token) external governance {
-        require(chainId() == 1 || chainId() == 3, 'called only on ethereum mainnet');
+        require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
         require(isSupportChainId(mainChainId), 'Not support mainChainId');
         require(_certifiedTokens[symbol] == 0, 'Certified added already');
-        if(mainChainId == chainId())
+        if(mainChainId == _chainId())
             require(keccak256(bytes(symbol)) == keccak256(bytes(ERC20UpgradeSafe(token).symbol())), 'symbol different');
         _certifiedTokens[symbol] = (mainChainId << 160) | uint(token);
         certifiedSymbols.push(symbol);
@@ -1935,7 +1935,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         IERC20(token).totalSupply();                                                            // just for check
         require(tokenMappeds[token] == address(0), 'TokenMapped created already');
 
-        bytes32 salt = keccak256(abi.encodePacked(chainId(), token));
+        bytes32 salt = keccak256(abi.encodePacked(_chainId(), token));
 
         bytes memory bytecode = type(InitializableProductProxy).creationCode;
         assembly {
@@ -1952,7 +1952,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         _chargeFee();
         require(mappableTokens[_msgSender()] == address(0), 'MappableToken created already');
 
-        bytes32 salt = keccak256(abi.encodePacked(chainId(), _msgSender()));
+        bytes32 salt = keccak256(abi.encodePacked(_chainId(), _msgSender()));
 
         bytes memory bytecode = type(InitializableProductProxy).creationCode;
         assembly {
