@@ -1621,16 +1621,16 @@ abstract contract Permit {
 }
 
 contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
-	function __MappableToken_init(address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint256 totalSupply_) external initializer {
+	function __MappableToken_init(address factory_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint256 totalSupply_) external initializer {
         __Context_init_unchained();
 		__ERC20_init_unchained(name_, symbol_);
 		_setupDecimals(decimals_);
 		_mint(creator_, totalSupply_);
-		__MappableToken_init_unchained(creator_);
+		__MappableToken_init_unchained(factory_, creator_);
 	}
 	
-	function __MappableToken_init_unchained(address creator_) public initializer {
-        factory = _msgSender();
+	function __MappableToken_init_unchained(address factory_, address creator_) public initializer {
+        factory = factory_;
         mainChainId = _chainId();
         token = address(0);
         creator = creator_;
@@ -1662,16 +1662,16 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
 
 
 contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
-	function __MappingToken_init(uint mainChainId_, address token_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) external initializer {
+	function __MappingToken_init(address factory_, uint mainChainId_, address token_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) external initializer {
         __Context_init_unchained();
 		__ERC20_init_unchained(name_, symbol_);
 		_setupDecimals(decimals_);
 		__ERC20Capped_init_unchained(cap_);
-		__MappingToken_init_unchained(mainChainId_, token_, creator_);
+		__MappingToken_init_unchained(factory_, mainChainId_, token_, creator_);
 	}
 	
-	function __MappingToken_init_unchained(uint mainChainId_, address token_, address creator_) public initializer {
-        factory = _msgSender();
+	function __MappingToken_init_unchained(address factory_, uint mainChainId_, address token_, address creator_) public initializer {
+        factory = factory_;
         mainChainId = mainChainId_;
         token = token_;
         creator = (token_ == address(0)) ? creator_ : address(0);
@@ -1941,7 +1941,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         assembly {
             tokenMapped := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
-        InitializableProductProxy(payable(tokenMapped)).__InitializableProductProxy_init(address(this), _TokenMapped_, abi.encodeWithSignature('__TokenMapped_init(address)', token));
+        InitializableProductProxy(payable(tokenMapped)).__InitializableProductProxy_init(address(this), _TokenMapped_, abi.encodeWithSignature('__TokenMapped_init(address,address)', address(this), token));
         
         tokenMappeds[token] = tokenMapped;
         emit CreateTokenMapped(_msgSender(), token, tokenMapped);
@@ -1958,7 +1958,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         assembly {
             mappableToken := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
-        InitializableProductProxy(payable(mappableToken)).__InitializableProductProxy_init(address(this), _MappableToken_, abi.encodeWithSignature('__MappableToken_init(address,string,string,uint8,uint256)', _msgSender(), name, symbol, decimals, totalSupply));
+        InitializableProductProxy(payable(mappableToken)).__InitializableProductProxy_init(address(this), _MappableToken_, abi.encodeWithSignature('__MappableToken_init(address,address,string,string,uint8,uint256)', address(this), _msgSender(), name, symbol, decimals, totalSupply));
         
         mappableTokens[_msgSender()] = mappableToken;
         emit CreateMappableToken(_msgSender(), name, symbol, decimals, totalSupply, mappableToken);
@@ -1976,7 +1976,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         assembly {
             mappingToken := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
-        InitializableProductProxy(payable(mappingToken)).__InitializableProductProxy_init(address(this), _MappingToken_, abi.encodeWithSignature('__MappingToken_init(uint256,address,address,string,string,uint8,uint256)', mainChainId, token, creator, name, symbol, decimals, cap));
+        InitializableProductProxy(payable(mappingToken)).__InitializableProductProxy_init(address(this), _MappingToken_, abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', address(this), mainChainId, token, creator, name, symbol, decimals, cap));
         
         mappingTokens[mainChainId][tokenOrCreator] = mappingToken;
         emit CreateMappingToken(mainChainId, token, creator, name, symbol, decimals, cap, mappingToken);
