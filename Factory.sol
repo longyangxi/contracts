@@ -1529,6 +1529,8 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
         uint N = signatures.length;
         require(N >= MappingTokenFactory(factory).getConfig(_minSignatures_), 'too few signatures');
         for(uint i=0; i<N; i++) {
+            for(uint j=0; j<i; j++)
+                require(signatures[i].signatory != signatures[j].signatory, 'repetitive signatory');
             bytes32 structHash = keccak256(abi.encode(RECEIVE_TYPEHASH, fromChainId, to, nonce, volume, signatures[i].signatory));
             bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _DOMAIN_SEPARATOR, structHash));
             address signatory = ecrecover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
