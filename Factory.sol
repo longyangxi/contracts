@@ -1508,6 +1508,8 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     event DecreaseAuthQuota(address indexed signatory, uint decrement, uint quota);
 
 
+    function needApprove() virtual public pure returns (bool);
+    
     function send(uint toChainId, address to, uint volume) virtual external payable returns (uint nonce) {
         return sendFrom(_msgSender(), toChainId, to, volume);
     }
@@ -1582,6 +1584,10 @@ contract TokenMapped is MappingBase {
         return IERC20(token).balanceOf(address(this));
     }
     
+    function needApprove() virtual override public pure returns (bool) {
+        return true;
+    }
+    
     function _sendFrom(address from, uint volume) virtual override internal {
         IERC20(token).safeTransferFrom(from, address(this), volume);
     }
@@ -1649,6 +1655,10 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
         return balanceOf(address(this));
     }
     
+    function needApprove() virtual override public pure returns (bool) {
+        return false;
+    }
+    
     function _sendFrom(address from, uint volume) virtual override internal {
         transferFrom(from, address(this), volume);
     }
@@ -1684,6 +1694,10 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
     
     function _approve(address owner, address spender, uint256 amount) virtual override(Permit, ERC20UpgradeSafe) internal {
         return ERC20UpgradeSafe._approve(owner, spender, amount);
+    }
+    
+    function needApprove() virtual override public pure returns (bool) {
+        return false;
     }
     
     function _sendFrom(address from, uint volume) virtual override internal {
