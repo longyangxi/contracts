@@ -564,6 +564,68 @@ contract ContextUpgradeSafe is Initializable {
 }
 
 /**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ */
+contract ReentrancyGuardUpgradeSafe is Initializable {
+    bool private _notEntered;
+
+
+    function __ReentrancyGuard_init() internal initializer {
+        __ReentrancyGuard_init_unchained();
+    }
+
+    function __ReentrancyGuard_init_unchained() internal initializer {
+
+
+        // Storing an initial non-zero value makes deployment a bit more
+        // expensive, but in exchange the refund on every call to nonReentrant
+        // will be lower in amount. Since refunds are capped to a percetange of
+        // the total transaction's gas, it is best to keep them low in cases
+        // like this one, to increase the likelihood of the full refund coming
+        // into effect.
+        _notEntered = true;
+
+    }
+
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_notEntered, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _notEntered = false;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _notEntered = true;
+    }
+
+    uint256[49] private __gap;
+}
+
+/**
  * @dev Standard math utilities missing in the Solidity language.
  */
 library Math {
@@ -1390,17 +1452,16 @@ contract Governable is Initializable {
 }
 
 
-contract Configurable is Governable {
-
+contract ConfigurableBase {
     mapping (bytes32 => uint) internal config;
     
     function getConfig(bytes32 key) public view returns (uint) {
         return config[key];
     }
-    function getConfig(bytes32 key, uint index) public view returns (uint) {
+    function getConfigI(bytes32 key, uint index) public view returns (uint) {
         return config[bytes32(uint(key) ^ index)];
     }
-    function getConfig(bytes32 key, address addr) public view returns (uint) {
+    function getConfigA(bytes32 key, address addr) public view returns (uint) {
         return config[bytes32(uint(key) ^ uint(addr))];
     }
 
@@ -1414,16 +1475,219 @@ contract Configurable is Governable {
     function _setConfig(bytes32 key, address addr, uint value) internal {
         _setConfig(bytes32(uint(key) ^ uint(addr)), value);
     }
-    
+}    
+
+contract Configurable is Governable, ConfigurableBase {
     function setConfig(bytes32 key, uint value) external governance {
         _setConfig(key, value);
     }
-    function setConfig(bytes32 key, uint index, uint value) external governance {
+    function setConfigI(bytes32 key, uint index, uint value) external governance {
         _setConfig(bytes32(uint(key) ^ index), value);
     }
-    function setConfig(bytes32 key, address addr, uint value) public governance {
+    function setConfigA(bytes32 key, address addr, uint value) public governance {
         _setConfig(bytes32(uint(key) ^ uint(addr)), value);
     }
+}
+
+
+// Inheritancea
+interface IStakingRewards {
+    // Views
+    function lastTimeRewardApplicable() external view returns (uint256);
+
+    function rewardPerToken() external view returns (uint256);
+
+    function rewards(address account) external view returns (uint256);
+
+    function earned(address account) external view returns (uint256);
+
+    function getRewardForDuration() external view returns (uint256);
+
+    function totalSupply() external view returns (uint256);
+
+    function balanceOf(address account) external view returns (uint256);
+
+    // Mutative
+
+    function stake(uint256 amount) external;
+
+    function withdraw(uint256 amount) external;
+
+    function getReward() external;
+
+    function exit() external;
+}
+
+abstract contract RewardsDistributionRecipient {
+    address public rewardsDistribution;
+
+    function notifyRewardAmount(uint256 reward) virtual external;
+
+    modifier onlyRewardsDistribution() {
+        require(msg.sender == rewardsDistribution, "Caller is not RewardsDistribution contract");
+        _;
+    }
+}
+
+contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, ReentrancyGuardUpgradeSafe {
+    using SafeMath for uint256;
+    using SafeERC20 for IERC20;
+
+    /* ========== STATE VARIABLES ========== */
+
+    IERC20 public rewardsToken;
+    IERC20 public stakingToken;
+    uint256 public periodFinish = 0;
+    uint256 public rewardRate = 0;                  // obsoleted
+    uint256 public rewardsDuration = 60 days;
+    uint256 public lastUpdateTime;
+    uint256 public rewardPerTokenStored;
+
+    mapping(address => uint256) public userRewardPerTokenPaid;
+    mapping(address => uint256) override public rewards;
+
+    uint256 internal _totalSupply;
+    mapping(address => uint256) internal _balances;
+
+    /* ========== CONSTRUCTOR ========== */
+
+    //constructor(
+    function __StakingRewards_init(
+        address _rewardsDistribution,
+        address _rewardsToken,
+        address _stakingToken
+    ) public initializer {
+        __ReentrancyGuard_init_unchained();
+        __StakingRewards_init_unchained(_rewardsDistribution, _rewardsToken, _stakingToken);
+    }
+    
+    function __StakingRewards_init_unchained(address _rewardsDistribution, address _rewardsToken, address _stakingToken) public initializer {
+        rewardsToken = IERC20(_rewardsToken);
+        stakingToken = IERC20(_stakingToken);
+        rewardsDistribution = _rewardsDistribution;
+    }
+
+    /* ========== VIEWS ========== */
+
+    function totalSupply() virtual override public view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(address account) virtual override public view returns (uint256) {
+        return _balances[account];
+    }
+
+    function lastTimeRewardApplicable() override public view returns (uint256) {
+        return Math.min(block.timestamp, periodFinish);
+    }
+
+    function rewardPerToken() virtual override public view returns (uint256) {
+        if (_totalSupply == 0) {
+            return rewardPerTokenStored;
+        }
+        return
+            rewardPerTokenStored.add(
+                lastTimeRewardApplicable().sub(lastUpdateTime).mul(rewardRate).mul(1e18).div(_totalSupply)
+            );
+    }
+
+    function earned(address account) virtual override public view returns (uint256) {
+        return _balances[account].mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);
+    }
+
+    function getRewardForDuration() virtual override external view returns (uint256) {
+        return rewardRate.mul(rewardsDuration);
+    }
+
+    /* ========== MUTATIVE FUNCTIONS ========== */
+
+    function stakeWithPermit(uint256 amount, uint deadline, uint8 v, bytes32 r, bytes32 s) virtual public nonReentrant updateReward(msg.sender) {
+        require(amount > 0, "Cannot stake 0");
+        _totalSupply = _totalSupply.add(amount);
+        _balances[msg.sender] = _balances[msg.sender].add(amount);
+
+        // permit
+        IPermit(address(stakingToken)).permit(msg.sender, address(this), amount, deadline, v, r, s);
+
+        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
+        emit Staked(msg.sender, amount);
+    }
+
+    function stake(uint256 amount) virtual override public nonReentrant updateReward(msg.sender) {
+        require(amount > 0, "Cannot stake 0");
+        _totalSupply = _totalSupply.add(amount);
+        _balances[msg.sender] = _balances[msg.sender].add(amount);
+        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
+        emit Staked(msg.sender, amount);
+    }
+
+    function withdraw(uint256 amount) virtual override public nonReentrant updateReward(msg.sender) {
+        require(amount > 0, "Cannot withdraw 0");
+        _totalSupply = _totalSupply.sub(amount);
+        _balances[msg.sender] = _balances[msg.sender].sub(amount);
+        stakingToken.safeTransfer(msg.sender, amount);
+        emit Withdrawn(msg.sender, amount);
+    }
+
+    function getReward() virtual override public nonReentrant updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            rewardsToken.safeTransfer(msg.sender, reward);
+            emit RewardPaid(msg.sender, reward);
+        }
+    }
+
+    function exit() virtual override public {
+        withdraw(_balances[msg.sender]);
+        getReward();
+    }
+
+    /* ========== RESTRICTED FUNCTIONS ========== */
+
+    function notifyRewardAmount(uint256 reward) override external onlyRewardsDistribution updateReward(address(0)) {
+        if (block.timestamp >= periodFinish) {
+            rewardRate = reward.div(rewardsDuration);
+        } else {
+            uint256 remaining = periodFinish.sub(block.timestamp);
+            uint256 leftover = remaining.mul(rewardRate);
+            rewardRate = reward.add(leftover).div(rewardsDuration);
+        }
+
+        // Ensure the provided reward amount is not more than the balance in the contract.
+        // This keeps the reward rate in the right range, preventing overflows due to
+        // very high values of rewardRate in the earned and rewardsPerToken functions;
+        // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
+        uint balance = rewardsToken.balanceOf(address(this));
+        require(rewardRate <= balance.div(rewardsDuration), "Provided reward too high");
+
+        lastUpdateTime = block.timestamp;
+        periodFinish = block.timestamp.add(rewardsDuration);
+        emit RewardAdded(reward);
+    }
+
+    /* ========== MODIFIERS ========== */
+
+    modifier updateReward(address account) virtual {
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = lastTimeRewardApplicable();
+        if (account != address(0)) {
+            rewards[account] = earned(account);
+            userRewardPerTokenPaid[account] = rewardPerTokenStored;
+        }
+        _;
+    }
+
+    /* ========== EVENTS ========== */
+
+    event RewardAdded(uint256 reward);
+    event Staked(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event RewardPaid(address indexed user, uint256 reward);
+}
+
+interface IPermit {
+    function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
 }
 
 
@@ -1529,7 +1793,7 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
         _chargeFee();
         require(received[fromChainId][to][nonce] == 0, 'withdrawn already');
         uint N = signatures.length;
-        require(N >= MappingTokenFactory(factory).getConfig(_minSignatures_), 'too few signatures');
+        require(N >= Factory(factory).getConfig(_minSignatures_), 'too few signatures');
         for(uint i=0; i<N; i++) {
             for(uint j=0; j<i; j++)
                 require(signatures[i].signatory != signatures[j].signatory, 'repetitive signatory');
@@ -1551,8 +1815,8 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     function _receive(address to, uint256 volume) virtual internal;
     
     function _chargeFee() virtual internal {
-        require(msg.value >= MappingTokenFactory(factory).getConfig(_fee_), 'fee is too low');
-        address payable feeTo = address(MappingTokenFactory(factory).getConfig(_feeTo_));
+        require(msg.value >= Factory(factory).getConfig(_fee_), 'fee is too low');
+        address payable feeTo = address(Factory(factory).getConfig(_feeTo_));
         if(feeTo == address(0))
             feeTo = address(uint160(factory));
         feeTo.transfer(msg.value);
@@ -1598,7 +1862,99 @@ contract TokenMapped is MappingBase {
 
     uint256[50] private __gap;
 }
+/*
+contract TokenMapped2 is TokenMapped, StakingRewards, ConfigurableBase {
+    modifier governance {
+        require(_msgSender() == MappingTokenFactory(factory).governor());
+        _;
+    }
+    
+    function setConfig(bytes32 key, uint value) external governance {
+        _setConfig(key, value);
+    }
+    function setConfigI(bytes32 key, uint index, uint value) external governance {
+        _setConfig(bytes32(uint(key) ^ index), value);
+    }
+    function setConfigA(bytes32 key, address addr, uint value) public governance {
+        _setConfig(bytes32(uint(key) ^ uint(addr)), value);
+    }
 
+    function rewardDelta() public view returns (uint amt) {
+        if(begin == 0 || begin >= now || lastUpdateTime >= now)
+            return 0;
+            
+        amt = rewardsToken.allowance(rewardsDistribution, address(this)).sub0(rewards[address(0)]);
+        
+        // calc rewardDelta in period
+        if(lep == 3) {                                                              // power
+            uint y = period.mul(1 ether).div(lastUpdateTime.add(rewardsDuration).sub(begin));
+            uint amt1 = amt.mul(1 ether).div(y);
+            uint amt2 = amt1.mul(period).div(now.add(rewardsDuration).sub(begin));
+            amt = amt.sub(amt2);
+        } else if(lep == 2) {                                                       // exponential
+            if(now.sub(lastUpdateTime) < rewardsDuration)
+                amt = amt.mul(now.sub(lastUpdateTime)).div(rewardsDuration);
+        }else if(now < periodFinish)                                                // linear
+            amt = amt.mul(now.sub(lastUpdateTime)).div(periodFinish.sub(lastUpdateTime));
+        else if(lastUpdateTime >= periodFinish)
+            amt = 0;
+    }
+    
+    function rewardPerToken() virtual override public view returns (uint256) {
+        if (_totalSupply == 0) {
+            return rewardPerTokenStored;
+        }
+        return
+            rewardPerTokenStored.add(
+                rewardDelta().mul(1e18).div(_totalSupply)
+            );
+    }
+
+    modifier updateReward(address account) virtual override {
+        (uint delta, uint d) = (rewardDelta(), 0);
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = now;
+        if (account != address(0)) {
+            rewards[account] = earned(account);
+            userRewardPerTokenPaid[account] = rewardPerTokenStored;
+        }
+
+        address addr = address(config[_ecoAddr_]);
+        uint ratio = config[_ecoRatio_];
+        if(addr != address(0) && ratio != 0) {
+            d = delta.mul(ratio).div(1 ether);
+            rewards[addr] = rewards[addr].add(d);
+        }
+        rewards[address(0)] = rewards[address(0)].add(delta).add(d);
+        _;
+    }
+
+    function getReward() virtual override public {
+        getReward(msg.sender);
+    }
+    function getReward(address payable acct) virtual public nonReentrant updateReward(acct) {
+        require(acct != address(0), 'invalid address');
+        require(getConfig(_blocklist_, acct) == 0, 'In blocklist');
+        bool isContract = acct.isContract();
+        require(!isContract || config[_allowContract_] != 0 || getConfig(_allowlist_, acct) != 0, 'No allowContract');
+
+        uint256 reward = rewards[acct];
+        if (reward > 0) {
+            paid[acct] = paid[acct].add(reward);
+            paid[address(0)] = paid[address(0)].add(reward);
+            rewards[acct] = 0;
+            rewards[address(0)] = rewards[address(0)].sub0(reward);
+            rewardsToken.safeTransferFrom(rewardsDistribution, acct, reward);
+            emit RewardPaid(acct, reward);
+        }
+    }
+
+    function getRewardForDuration() override external view returns (uint256) {
+        return rewardsToken.allowance(rewardsDistribution, address(this)).sub0(rewards[address(0)]);
+    }
+    
+}
+*/
 
 abstract contract Permit {
     // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
@@ -1714,12 +2070,12 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
 }
 
 
-contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
+contract Factory is ContextUpgradeSafe, Configurable, Constants {
     using SafeERC20 for IERC20;
     using SafeMath for uint;
 
-    bytes32 public constant REGISTER_TYPEHASH   = keccak256("RegisterMapping(uint mainChainId,address token,uint[] chainIds,address[] mappingTokenMappeds_)");
-    bytes32 public constant CREATE_TYPEHASH     = keccak256("CreateMappingToken(address creator,uint mainChainId,address token,string name,string symbol,uint8 decimals,uint cap)");
+    bytes32 public constant REGISTER_TYPEHASH   = keccak256("RegisterMapping(uint mainChainId,address token,uint[] chainIds,address[] mappingTokenMappeds,address signatory)");
+    bytes32 public constant CREATE_TYPEHASH     = keccak256("CreateMappingToken(address creator,uint mainChainId,address token,string name,string symbol,uint8 decimals,uint cap,address signatory)");
     bytes32 public constant DOMAIN_TYPEHASH     = keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)");
     bytes32 public DOMAIN_SEPARATOR;
 
@@ -1750,16 +2106,16 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
-        upgradeProductImplementationsTo(_implTokenMapped, _implMappableToken, _implMappingToken);
+        upgradeProductImplementationsTo_(_implTokenMapped, _implMappableToken, _implMappingToken);
     }
 
-    function upgradeProductImplementationsTo(address _implTokenMapped, address _implMappableToken, address _implMappingToken) public governance {
+    function upgradeProductImplementationsTo_(address _implTokenMapped, address _implMappableToken, address _implMappingToken) public governance {
         productImplementations[_TokenMapped_]   = _implTokenMapped;
         productImplementations[_MappableToken_] = _implMappableToken;
         productImplementations[_MappingToken_]  = _implMappingToken;
     }
     
-    function setAuthorty(address authorty, bool enable) virtual external governance {
+    function setAuthorty_(address authorty, bool enable) virtual external governance {
         authorties[authorty] = enable;
         emit SetAuthorty(authorty, enable);
     }
@@ -1868,7 +2224,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
         return false;
     }
     
-    function registerSupportChainId(uint chainId_) virtual external governance {
+    function registerSupportChainId_(uint chainId_) virtual external governance {
         require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
         require(!isSupportChainId(chainId_), 'support chainId already');
         supportChainIds.push(chainId_);
@@ -1890,7 +2246,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
     }
     event RegisterMapping(uint mainChainId, address token, uint chainId, address mappingTokenMapped);
     
-    function registerMapping(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual external governance {
+    function registerMapping_(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual external governance {
         _registerMapping(mainChainId, token, chainIds, mappingTokenMappeds_);
     }
     
@@ -1932,7 +2288,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
             (chainIds[i], tokens[i]) = certifiedTokens(certifiedSymbols[i]);
     }
 
-    function registerCertified(string memory symbol, uint mainChainId, address token) external governance {
+    function registerCertified_(string memory symbol, uint mainChainId, address token) external governance {
         require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
         require(isSupportChainId(mainChainId), 'Not support mainChainId');
         require(_certifiedTokens[symbol] == 0, 'Certified added already');
@@ -1997,7 +2353,7 @@ contract MappingTokenFactory is ContextUpgradeSafe, Configurable, Constants {
     }
     event CreateMappingToken(uint mainChainId, address indexed token, address indexed creator, string name, string symbol, uint8 decimals, uint cap, address indexed mappingToken);
     
-    function createMappingToken(uint mainChainId, address token, address creator, string memory name, string memory symbol, uint8 decimals, uint cap) public payable governance returns (address mappingToken) {
+    function createMappingToken_(uint mainChainId, address token, address creator, string memory name, string memory symbol, uint8 decimals, uint cap) public payable governance returns (address mappingToken) {
         return _createMappingToken(mainChainId, token, creator, name, symbol, decimals, cap);
     }
     
