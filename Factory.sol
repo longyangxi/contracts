@@ -2257,7 +2257,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         for(uint i=0; i<N; i++) {
             for(uint j=0; j<i; j++)
                 require(signatures[i].signatory != signatures[j].signatory, 'repetitive signatory');
-            bytes32 structHash = keccak256(abi.encode(REGISTER_TYPEHASH, mainChainId, token, chainIds, mappingTokenMappeds_, signatures[i].signatory));
+            bytes32 structHash = keccak256(abi.encode(REGISTER_TYPEHASH, mainChainId, token, keccak256(abi.encodePacked(chainIds)), keccak256(abi.encodePacked(mappingTokenMappeds_)), signatures[i].signatory));
             bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
             address signatory = ecrecover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
             require(signatory != address(0), "invalid signature");
@@ -2363,7 +2363,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         for(uint i=0; i<N; i++) {
             for(uint j=0; j<i; j++)
                 require(signatures[i].signatory != signatures[j].signatory, 'repetitive signatory');
-            bytes32 hash = keccak256(abi.encode(CREATE_TYPEHASH, _msgSender(), mainChainId, token, name, symbol, decimals, cap, signatures[i].signatory));
+            bytes32 hash = keccak256(abi.encode(CREATE_TYPEHASH, _msgSender(), mainChainId, token, keccak256(bytes(name)), keccak256(bytes(symbol)), decimals, cap, signatures[i].signatory));
             hash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, hash));
             address signatory = ecrecover(hash, signatures[i].v, signatures[i].r, signatures[i].s);
             require(signatory != address(0), "invalid signature");
