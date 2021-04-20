@@ -1006,22 +1006,25 @@ contract LBP is Configurable {
     address public token;
     address public WETH;
     address public pair;
-    address public recipient;
+    address internal distributor;
+    address internal recipient;
     uint public base;               //price;
     uint public target;             //volume;
     uint public begin;
     uint public span;
     uint public lasttime;
     
-    function __LBP_init(address governor_, address token_, address WETH_, address pair_, address recipient_, uint base_, uint target_, uint begin_, uint span_) external initializer {
+    
+    function __LBP_init(address governor_, address token_, address WETH_, address pair_, address distributor_, address recipient_, uint base_, uint target_, uint begin_, uint span_) external initializer {
         __Governable_init_unchained(governor_);
-        __LBP_init_unchained(token_, WETH_, pair_, recipient_, base_, target_, begin_, span_);
+        __LBP_init_unchained(token_, WETH_, pair_, distributor_, recipient_, base_, target_, begin_, span_);
     }
     
-    function __LBP_init_unchained(address token_, address WETH_, address pair_, address recipient_, uint base_, uint target_, uint begin_, uint span_) public governance {
+    function __LBP_init_unchained(address token_, address WETH_, address pair_, address distributor_, address recipient_, uint base_, uint target_, uint begin_, uint span_) public governance {
         token       = token_;
         WETH        = WETH_;
         pair        = pair_;
+        distributor = distributor_;
         recipient   = recipient_;
         base        = base_;
         target      = target_;
@@ -1032,15 +1035,17 @@ contract LBP is Configurable {
         config[_feeRate_]   = 0.003 ether;      // 0.3%
     }
     
-    function delta() virtual public view returns (uint) {
+    function delta() virtual public view returns (uint d) {
         if(now <= lasttime || lasttime >= begin.add(span))
             return 0;
-        return target.mul(Math.min(now, begin.add(span)).sub(begin)).div(span).mul(priceSwap()).div(base);
+        d = target.mul(Math.min(now, begin.add(span)).sub(begin)).div(span).mul(priceSwap()).div(base);
+        d = Math.min(d, IERC20(token).allowance(distributor, address(this)));
+        d = Math.min(d, IERC20(token).balanceOf(distributor));
     }
     
     // given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
     function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal view returns (uint amountOut) {
-        //require(amountIn > 0, 'UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT');
+        require(amountIn > 0, 'UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT');
         require(reserveIn > 0 && reserveOut > 0, 'UniswapV2Library: INSUFFICIENT_LIQUIDITY');
         uint amountInWithFee = amountIn.mul(uint(1e18).sub(config[_feeRate_])).div(1e18);
         uint numerator = amountInWithFee.mul(reserveOut);
@@ -1058,7 +1063,7 @@ contract LBP is Configurable {
         (uint112 _reserve0, uint112 _reserve1,) = IUniswapV2Pair(pair).getReserves(); // gas savings
         (uint amt, uint vol) = WETH < token ? (_reserve0, _reserve1) : (_reserve1, _reserve0);
         uint dv = delta();
-        uint da = getAmountOut(dv, vol, amt);
+        uint da = dv == 0 ? 0 : getAmountOut(dv, vol, amt);
         return amt.sub(da).mul(1e18).div(vol.add(dv));
     }
     
@@ -1066,7 +1071,7 @@ contract LBP is Configurable {
         (uint112 _reserve0, uint112 _reserve1,) = IUniswapV2Pair(pair).getReserves(); // gas savings
         (uint amt, uint vol) = WETH < token ? (_reserve0, _reserve1) : (_reserve1, _reserve0);
         uint dv = delta();
-        uint da = getAmountOut(dv, vol, amt);
+        uint da = dv == 0 ? 0 : getAmountOut(dv, vol, amt);
         
         return getAmountOut(amount, amt.sub(da), vol.add(dv));
     }
@@ -1083,12 +1088,13 @@ contract LBP is Configurable {
         (uint112 _reserve0, uint112 _reserve1,) = IUniswapV2Pair(pair).getReserves(); // gas savings
         (uint amt, uint vol) = WETH < token ? (_reserve0, _reserve1) : (_reserve1, _reserve0);
         uint dv = delta();
-        uint da = getAmountOut(dv, vol, amt);
-        (uint d0, uint d1) = WETH < token ? (da, uint(0)) : (uint(0), da);
-        IERC20(token).safeTransferFrom(recipient, pair, dv);
-        IUniswapV2Pair(pair).swap(d0, d1, recipient, '');
-        
-        (d0, d1) = WETH < token ? (uint(0), out) : (out, uint(0));
+        if(dv > 0) {
+            uint da = getAmountOut(dv, vol, amt);
+            (uint d0, uint d1) = WETH < token ? (da, uint(0)) : (uint(0), da);
+            IERC20(token).safeTransferFrom(distributor, pair, dv);
+            IUniswapV2Pair(pair).swap(d0, d1, recipient, '');
+        }
+        (uint d0, uint d1) = WETH < token ? (uint(0), out) : (out, uint(0));
         IWETH(WETH).deposit{ value: msg.value }();
         IWETH(WETH).transfer(pair, msg.value);
         IUniswapV2Pair(pair).swap(d0, d1, msg.sender, '');
