@@ -1085,7 +1085,7 @@ contract LBP is Configurable {
         uint dv = delta();
         uint da = getAmountOut(dv, vol, amt);
         (uint d0, uint d1) = WETH < token ? (da, uint(0)) : (uint(0), da);
-        IERC20(token).safeTransfer(pair, dv);
+        IERC20(token).safeTransferFrom(recipient, pair, dv);
         IUniswapV2Pair(pair).swap(d0, d1, recipient, '');
         
         (d0, d1) = WETH < token ? (uint(0), out) : (out, uint(0));
