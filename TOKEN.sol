@@ -934,6 +934,74 @@ contract Configurable is Governable {
 }
 
 
+contract AirdropOption is Configurable {
+	using SafeMath for uint;
+	using SafeERC20 for IERC20;
+	
+	IERC20 public token;
+	IERC20 public currency;
+	address internal distributor;
+	uint public price;
+	uint public maturity;
+	uint public expiry;
+	
+	mapping (address => uint) public quota;
+	mapping (address => uint) public done;
+
+	function __AirdropOption_init(address governor_, IERC20 token_, IERC20 currency_, address distributor_, uint price_, uint maturity_, uint expiry_) external initializer {
+		__Governable_init_unchained(governor_);
+		__AirdropOption_init_unchained(token_, currency_, distributor_, price_, maturity_, expiry_);
+	}
+	
+	function __AirdropOption_init_unchained(IERC20 token_, IERC20 currency_, address distributor_, uint price_, uint maturity_, uint expiry_) public governance {
+		token       = token_;
+		currency    = currency_;
+		distributor = distributor_;
+		price       = price_;
+		maturity    = maturity_;
+		expiry      = expiry_;
+	}
+	
+    function setQuota(address addr, uint amount) public governance {
+        require(amount >= done[addr], 'done overflow');
+        
+        uint oldQuota = quota[addr];
+        
+        quota[addr] = amount;
+
+        uint totalQuota = quota[address(0)].add(amount).sub(oldQuota);
+        uint totalDone  = done[address(0)];
+        require(totalQuota <= totalDone.add(token.allowance(distributor, address(this))), 'out of quota');
+        quota[address(0)] = totalQuota;
+    }
+    
+    function setQuotas(address[] memory addrs, uint[] memory amounts) public {
+        for(uint i=0; i<addrs.length; i++)
+            setQuota(addrs[i], amounts[i]);
+    }
+    
+	function exercise() public {
+		require(now >= maturity, 'IMMATURE');
+		require(now <= expiry, 'EXPIRED');
+		uint quota_ = quota[msg.sender];
+		uint done_  = done[msg.sender];
+		require(quota_ > 0, 'no quota');
+		require(quota_ > done_, 'exercised already');
+		uint delta = quota_.sub(done_);
+		
+		currency.safeTransferFrom(msg.sender, distributor, delta.mul(price).div(1e18));
+		token.safeTransferFrom(distributor, msg.sender, delta);
+		done[msg.sender] = quota_;
+		emit Exercise(msg.sender, delta);
+	}
+	event Exercise(address addr, uint amount);
+	
+    fallback() external {
+        exercise();
+    }
+}
+
+
 contract Offering is Configurable {
 	using SafeMath for uint;
 	using SafeERC20 for IERC20;
