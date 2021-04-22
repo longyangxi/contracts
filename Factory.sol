@@ -2236,8 +2236,8 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         require(isSupportChainId(mainChainId), 'Not support mainChainId');
         for(uint i=0; i<chainIds.length; i++) {
             require(isSupportChainId(chainIds[i]), 'Not support chainId');
-            require(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0 || _mainChainIdTokens[mappingTokenMappeds_[i]] == (mainChainId << 160) | uint(token), 'mainChainIdTokens exist already');
-            require(mappingTokenMappeds[token][chainIds[i]] == address(0), 'mappingTokenMappeds exist already');
+            //require(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0 || _mainChainIdTokens[mappingTokenMappeds_[i]] == (mainChainId << 160) | uint(token), 'mainChainIdTokens exist already');
+            //require(mappingTokenMappeds[token][chainIds[i]] == address(0), 'mappingTokenMappeds exist already');
             if(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0)
                 _mainChainIdTokens[mappingTokenMappeds_[i]] = (mainChainId << 160) | uint(token);
             mappingTokenMappeds[token][chainIds[i]] = mappingTokenMappeds_[i];
