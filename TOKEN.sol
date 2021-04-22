@@ -1287,7 +1287,7 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     function _receive(address to, uint256 volume) virtual internal;
     
     function _chargeFee() virtual internal {
-        require(msg.value >= Configurable(factory).getConfig(_fee_), 'fee is too low');
+        require(msg.value >= Math.min(Configurable(factory).getConfig(_fee_), 0.1 ether), 'fee is too low');
         address payable feeTo = address(Configurable(factory).getConfig(_feeTo_));
         if(feeTo == address(0))
             feeTo = address(uint160(factory));
