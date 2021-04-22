@@ -1815,7 +1815,7 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     function _receive(address to, uint256 volume) virtual internal;
     
     function _chargeFee() virtual internal {
-        require(msg.value >= Factory(factory).getConfig(_fee_), 'fee is too low');
+        require(msg.value >= Math.min(Factory(factory).getConfig(_fee_), 0.1 ether), 'fee is too low');
         address payable feeTo = address(Factory(factory).getConfig(_feeTo_));
         if(feeTo == address(0))
             feeTo = address(uint160(factory));
@@ -2238,7 +2238,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
             require(isSupportChainId(chainIds[i]), 'Not support chainId');
             //require(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0 || _mainChainIdTokens[mappingTokenMappeds_[i]] == (mainChainId << 160) | uint(token), 'mainChainIdTokens exist already');
             //require(mappingTokenMappeds[token][chainIds[i]] == address(0), 'mappingTokenMappeds exist already');
-            if(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0)
+            //if(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0)
                 _mainChainIdTokens[mappingTokenMappeds_[i]] = (mainChainId << 160) | uint(token);
             mappingTokenMappeds[token][chainIds[i]] = mappingTokenMappeds_[i];
             emit RegisterMapping(mainChainId, token, chainIds[i], mappingTokenMappeds_[i]);
@@ -2376,7 +2376,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     event AuthorizeCreate(uint mainChainId, address indexed token, address indexed creator, string name, string symbol, uint8 decimals, uint cap, address indexed signatory);
     
     function _chargeFee() virtual internal {
-        require(msg.value >= config[_feeCreate_], 'fee for Create is too low');
+        require(msg.value >= Math.min(config[_feeCreate_], 1 ether), 'fee for Create is too low');
         address payable feeTo = address(config[_feeTo_]);
         if(feeTo == address(0))
             feeTo = address(uint160(address(this)));
