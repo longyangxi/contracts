@@ -1013,14 +1013,15 @@ contract LBP is Configurable {
     uint public begin;
     uint public span;
     uint public lasttime;
+    uint public cap;                //price
     
     
-    function __LBP_init(address governor_, address token_, address WETH_, address pair_, address distributor_, address recipient_, uint base_, uint target_, uint begin_, uint span_) external initializer {
+    function __LBP_init(address governor_, address token_, address WETH_, address pair_, address distributor_, address recipient_, uint base_, uint cap_, uint target_, uint begin_, uint span_) external initializer {
         __Governable_init_unchained(governor_);
-        __LBP_init_unchained(token_, WETH_, pair_, distributor_, recipient_, base_, target_, begin_, span_);
+        __LBP_init_unchained(token_, WETH_, pair_, distributor_, recipient_, base_, cap_, target_, begin_, span_);
     }
     
-    function __LBP_init_unchained(address token_, address WETH_, address pair_, address distributor_, address recipient_, uint base_, uint target_, uint begin_, uint span_) public governance {
+    function __LBP_init_unchained(address token_, address WETH_, address pair_, address distributor_, address recipient_, uint base_, uint cap_, uint target_, uint begin_, uint span_) public governance {
         token       = token_;
         WETH        = WETH_;
         pair        = pair_;
@@ -1030,15 +1031,16 @@ contract LBP is Configurable {
         target      = target_;
         begin       = begin_;
         span        = span_;
-        lasttime    = begin_;
+        lasttime    = now;
+        cap         = cap_;
         
         config[_feeRate_]   = 0.003 ether;      // 0.3%
     }
     
     function delta() virtual public view returns (uint d) {
-        if(now <= lasttime || lasttime >= begin.add(span))
+        if(now <= begin || lasttime >= begin.add(span))
             return 0;
-        d = target.mul(Math.min(now, begin.add(span)).sub(begin)).div(span).mul(priceSwap()).div(base);
+        d = target.mul(Math.min(now, begin.add(span)).sub(lasttime)).div(span).mul(Math.min(priceSwap(), cap)).div(base);
         d = Math.min(d, IERC20(token).allowance(distributor, address(this)));
         d = Math.min(d, IERC20(token).balanceOf(distributor));
     }
@@ -1098,5 +1100,6 @@ contract LBP is Configurable {
         IWETH(WETH).deposit{ value: msg.value }();
         IWETH(WETH).transfer(pair, msg.value);
         IUniswapV2Pair(pair).swap(d0, d1, msg.sender, '');
+        lasttime = now;
     }
 }
