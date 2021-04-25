@@ -962,6 +962,10 @@ contract AirdropOption is Configurable {
 		expiry      = expiry_;
 	}
 	
+	function fixDone0(uint allowance0) external governance {
+	    done[address(0)] = allowance0.sub(token.allowance(distributor, address(this)));
+	}
+	
     function setQuota(address addr, uint amount) public governance {
         require(amount >= done[addr], 'done overflow');
         
@@ -992,6 +996,7 @@ contract AirdropOption is Configurable {
 		currency.safeTransferFrom(msg.sender, distributor, delta.mul(price).div(1e18));
 		token.safeTransferFrom(distributor, msg.sender, delta);
 		done[msg.sender] = quota_;
+		done[address(0)] = done[address(0)].add(delta);
 		emit Exercise(msg.sender, delta);
 	}
 	event Exercise(address addr, uint amount);
