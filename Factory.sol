@@ -2070,6 +2070,19 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
 }
 
 
+contract MappingTokenProxy is ProductProxy, Constants {
+    constructor(address factory_, uint mainChainId_, address token_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) public {
+        //require(_factory() == address(0));
+        assert(FACTORY_SLOT == bytes32(uint256(keccak256('eip1967.proxy.factory')) - 1));
+        assert(NAME_SLOT    == bytes32(uint256(keccak256('eip1967.proxy.name')) - 1));
+        _setFactory(factory_);
+        _setName(_MappingToken_);
+        (bool success,) = _implementation().delegatecall(abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', factory_, mainChainId_, token_, creator_, name_, symbol_, decimals_, cap_));
+        require(success);
+    }  
+}
+
+
 contract Factory is ContextUpgradeSafe, Configurable, Constants {
     using SafeERC20 for IERC20;
     using SafeMath for uint;
@@ -2107,7 +2120,9 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
         upgradeProductImplementationsTo_(_implTokenMapped, _implMappableToken, _implMappingToken);
+        emit ProductProxyCodeHash(keccak256(type(InitializableProductProxy).creationCode));
     }
+    event ProductProxyCodeHash(bytes32 codeHash);
 
     function upgradeProductImplementationsTo_(address _implTokenMapped, address _implMappableToken, address _implMappingToken) public governance {
         productImplementations[_TokenMapped_]   = _implTokenMapped;
@@ -2300,6 +2315,28 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event RegisterCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
     
+    function updateCertified_(string memory symbol, uint mainChainId, address token) external governance {
+        require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
+        require(isSupportChainId(mainChainId), 'Not support mainChainId');
+        //require(_certifiedTokens[symbol] == 0, 'Certified added already');
+        if(mainChainId == _chainId())
+            require(keccak256(bytes(symbol)) == keccak256(bytes(ERC20UpgradeSafe(token).symbol())), 'symbol different');
+        _certifiedTokens[symbol] = (mainChainId << 160) | uint(token);
+        //certifiedSymbols.push(symbol);
+        emit UpdateCertified(symbol, mainChainId, token);
+    }
+    event UpdateCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
+    
+    // calculates the CREATE2 address for a pair without making any external calls
+    function calcMapping(uint mainChainId, address tokenOrCreator) public view returns (address) {
+        return address(uint(keccak256(abi.encodePacked(
+                hex'ff',
+                address(this),
+                keccak256(abi.encodePacked(mainChainId, tokenOrCreator)),
+				keccak256(type(InitializableProductProxy).creationCode)                    //hex'96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f' // init code hash
+            ))));
+    }
+
     function createTokenMapped(address token) external payable returns (address tokenMapped) {
         _chargeFee();
         IERC20(token).totalSupply();                                                            // just for check
