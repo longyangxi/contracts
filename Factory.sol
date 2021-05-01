@@ -1697,8 +1697,10 @@ contract Constants {
     bytes32 internal constant _MappingToken_    = 'MappingToken';
     bytes32 internal constant _fee_             = 'fee';
     bytes32 internal constant _feeCreate_       = 'feeCreate';
+    bytes32 internal constant _feeRegister_     = 'feeRegister';
     bytes32 internal constant _feeTo_           = 'feeTo';
     bytes32 internal constant _minSignatures_   = 'minSignatures';
+    bytes32 internal constant _initAuthQuotaRatio_  = 'initAuthQuotaRatio';
     bytes32 internal constant _uniswapRounter_  = 'uniswapRounter';
     
     function _chainId() internal pure returns (uint id) {
@@ -1736,11 +1738,11 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
         _;
     }
     
-    function increaseAuthQuotas(address[] memory signatorys, uint[] memory increments) virtual external returns (uint[] memory quotas) {
-        require(signatorys.length == increments.length, 'two array lenth not equal');
-        quotas = new uint[](signatorys.length);
-        for(uint i=0; i<signatorys.length; i++)
-            quotas[i] = increaseAuthQuota(signatorys[i], increments[i]);
+    function increaseAuthQuotas(address[] memory signatories, uint[] memory increments) virtual external returns (uint[] memory quotas) {
+        require(signatories.length == increments.length, 'two array lenth not equal');
+        quotas = new uint[](signatories.length);
+        for(uint i=0; i<signatories.length; i++)
+            quotas[i] = increaseAuthQuota(signatories[i], increments[i]);
     }
     
     function increaseAuthQuota(address signatory, uint increment) virtual public onlyFactory returns (uint quota) {
@@ -1750,11 +1752,11 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     }
     event IncreaseAuthQuota(address indexed signatory, uint increment, uint quota);
     
-    function decreaseAuthQuotas(address[] memory signatorys, uint[] memory decrements) virtual external returns (uint[] memory quotas) {
-        require(signatorys.length == decrements.length, 'two array lenth not equal');
-        quotas = new uint[](signatorys.length);
-        for(uint i=0; i<signatorys.length; i++)
-            quotas[i] = decreaseAuthQuota(signatorys[i], decrements[i]);
+    function decreaseAuthQuotas(address[] memory signatories, uint[] memory decrements) virtual external returns (uint[] memory quotas) {
+        require(signatories.length == decrements.length, 'two array lenth not equal');
+        quotas = new uint[](signatories.length);
+        for(uint i=0; i<signatories.length; i++)
+            quotas[i] = decreaseAuthQuota(signatories[i], decrements[i]);
     }
     
     function decreaseAuthQuota(address signatory, uint decrement) virtual public onlyFactory returns (uint quota) {
@@ -2105,6 +2107,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     uint[] public supportChainIds;
     mapping (string  => uint256) internal _certifiedTokens;         // symbol => mainChainId+token
     string[] public certifiedSymbols;
+    address[] public signatories;
 
     function __MappingTokenFactory_init(address _governor, address _implTokenMapped, address _implMappableToken, address _implMappingToken, address _feeTo) external initializer {
         __Governable_init_unchained(_governor);
@@ -2113,9 +2116,11 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     
     function __MappingTokenFactory_init_unchained(address _implTokenMapped, address _implMappableToken, address _implMappingToken, address _feeTo) public governance {
         config[_fee_]                           = 0.005 ether;
-        //config[_feeCreate_]                     = 0.200 ether;
+        config[_feeCreate_]                     = 0.100 ether;
+        config[_feeRegister_]                   = 0.200 ether;
         config[_feeTo_]                         = uint(_feeTo);
         config[_minSignatures_]                 = 3;
+        config[_initAuthQuotaRatio_]            = 0.100 ether;  // 10%
         config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
@@ -2130,6 +2135,10 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         productImplementations[_MappingToken_]  = _implMappingToken;
     }
     
+    function setSignatories(address[] calldata signatories_) virtual external governance {
+        signatories = signatories_;
+    }
+    
     function setAuthorty_(address authorty, bool enable) virtual external governance {
         authorties[authorty] = enable;
         emit SetAuthorty(authorty, enable);
@@ -2141,10 +2150,24 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         _;
     }
     
-    function increaseAuthQuotas(address mappingTokenMapped, address[] memory signatorys, uint[] memory increments) virtual external onlyAuthorty returns (uint[] memory quotas) {
-        quotas = MappingBase(mappingTokenMapped).increaseAuthQuotas(signatorys, increments);
-        for(uint i=0; i<signatorys.length; i++)
-            emit IncreaseAuthQuota(_msgSender(), mappingTokenMapped, signatorys[i], increments[i], quotas[i]);
+    function _initAuthQuotas(address mappingTokenMapped, uint cap) internal {
+        uint quota = cap.mul(config[_initAuthQuotaRatio_]).div(1e18);
+        uint[] memory quotas = new uint[](signatories.length);
+        for(uint i=0; i<quotas.length; i++)
+            quotas[i] = quota;
+        _increaseAuthQuotas(mappingTokenMapped, signatories, quotas);
+    }
+    
+    function _increaseAuthQuotas(address mappingTokenMapped, address[] memory signatories_, uint[] memory increments) virtual internal returns (uint[] memory quotas) {
+        quotas = MappingBase(mappingTokenMapped).increaseAuthQuotas(signatories_, increments);
+        for(uint i=0; i<signatories_.length; i++)
+            emit IncreaseAuthQuota(_msgSender(), mappingTokenMapped, signatories_[i], increments[i], quotas[i]);
+    }
+    function increaseAuthQuotas_(address mappingTokenMapped, uint[] memory increments) virtual external onlyAuthorty returns (uint[] memory quotas) {
+        return _increaseAuthQuotas(mappingTokenMapped, signatories, increments);
+    }
+    function increaseAuthQuotas(address mappingTokenMapped, address[] memory signatories_, uint[] memory increments) virtual external onlyAuthorty returns (uint[] memory quotas) {
+        return _increaseAuthQuotas(mappingTokenMapped, signatories_, increments);
     }
     
     function increaseAuthQuota(address mappingTokenMapped, address signatory, uint increment) virtual external onlyAuthorty returns (uint quota) {
@@ -2153,10 +2176,13 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event IncreaseAuthQuota(address indexed authorty, address indexed mappingTokenMapped, address indexed signatory, uint increment, uint quota);
     
-    function decreaseAuthQuotas(address mappingTokenMapped, address[] memory signatorys, uint[] memory decrements) virtual external onlyAuthorty returns (uint[] memory quotas) {
-        quotas = MappingBase(mappingTokenMapped).decreaseAuthQuotas(signatorys, decrements);
-        for(uint i=0; i<signatorys.length; i++)
-            emit DecreaseAuthQuota(_msgSender(), mappingTokenMapped, signatorys[i], decrements[i], quotas[i]);
+    function decreaseAuthQuotas_(address mappingTokenMapped, uint[] memory decrements) virtual external returns (uint[] memory quotas) {
+        return decreaseAuthQuotas(mappingTokenMapped, signatories, decrements);
+    }
+    function decreaseAuthQuotas(address mappingTokenMapped, address[] memory signatories_, uint[] memory decrements) virtual public onlyAuthorty returns (uint[] memory quotas) {
+        quotas = MappingBase(mappingTokenMapped).decreaseAuthQuotas(signatories_, decrements);
+        for(uint i=0; i<signatories_.length; i++)
+            emit DecreaseAuthQuota(_msgSender(), mappingTokenMapped, signatories_[i], decrements[i], quotas[i]);
     }
     
     function decreaseAuthQuota(address mappingTokenMapped, address signatory, uint decrement) virtual external onlyAuthorty returns (uint quota) {
@@ -2165,11 +2191,14 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event DecreaseAuthQuota(address indexed authorty, address indexed mappingTokenMapped, address indexed signatory, uint decrement, uint quota);
 
-    function increaseAuthCount(address[] memory signatorys, uint[] memory increments) virtual external returns (uint[] memory counts) {
-        require(signatorys.length == increments.length, 'two array lenth not equal');
-        counts = new uint[](signatorys.length);
-        for(uint i=0; i<signatorys.length; i++)
-            counts[i] = increaseAuthCount(signatorys[i], increments[i]);
+    function increaseAuthCounts_(uint[] memory increments) virtual external returns (uint[] memory counts) {
+        return increaseAuthCounts(signatories, increments);
+    }
+    function increaseAuthCounts(address[] memory signatories_, uint[] memory increments) virtual public returns (uint[] memory counts) {
+        require(signatories_.length == increments.length, 'two array lenth not equal');
+        counts = new uint[](signatories_.length);
+        for(uint i=0; i<signatories_.length; i++)
+            counts[i] = increaseAuthCount(signatories_[i], increments[i]);
     }
     
     function increaseAuthCount(address signatory, uint increment) virtual public onlyAuthorty returns (uint count) {
@@ -2179,11 +2208,14 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event IncreaseAuthQuota(address indexed authorty, address indexed signatory, uint increment, uint quota);
     
-    function decreaseAuthCounts(address[] memory signatorys, uint[] memory decrements) virtual external returns (uint[] memory counts) {
-        require(signatorys.length == decrements.length, 'two array lenth not equal');
-        counts = new uint[](signatorys.length);
-        for(uint i=0; i<signatorys.length; i++)
-            counts[i] = decreaseAuthCount(signatorys[i], decrements[i]);
+    function decreaseAuthCounts_(uint[] memory decrements) virtual external returns (uint[] memory counts) {
+        return decreaseAuthCounts(signatories, decrements);
+    }
+    function decreaseAuthCounts(address[] memory signatories_, uint[] memory decrements) virtual public returns (uint[] memory counts) {
+        require(signatories_.length == decrements.length, 'two array lenth not equal');
+        counts = new uint[](signatories_.length);
+        for(uint i=0; i<signatories_.length; i++)
+            counts[i] = decreaseAuthCount(signatories_[i], decrements[i]);
     }
     
     function decreaseAuthCount(address signatory, uint decrement) virtual public onlyAuthorty returns (uint count) {
@@ -2266,7 +2298,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     
     function registerMapping(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_, Signature[] memory signatures) virtual external payable {
-        _chargeFee();
+        _chargeFee(config[_feeRegister_]);
         uint N = signatures.length;
         require(N >= getConfig(_minSignatures_), 'too few signatures');
         for(uint i=0; i<N; i++) {
@@ -2338,8 +2370,8 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
 
     function createTokenMapped(address token) external payable returns (address tokenMapped) {
-        _chargeFee();
-        IERC20(token).totalSupply();                                                            // just for check
+        if(_msgSender() != governor)
+            _chargeFee(config[_feeCreate_]);
         require(tokenMappeds[token] == address(0), 'TokenMapped created already');
 
         bytes32 salt = keccak256(abi.encodePacked(_chainId(), token));
@@ -2351,12 +2383,14 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         InitializableProductProxy(payable(tokenMapped)).__InitializableProductProxy_init(address(this), _TokenMapped_, abi.encodeWithSignature('__TokenMapped_init(address,address)', address(this), token));
         
         tokenMappeds[token] = tokenMapped;
+        _initAuthQuotas(tokenMapped, IERC20(token).totalSupply());
         emit CreateTokenMapped(_msgSender(), token, tokenMapped);
     }
     event CreateTokenMapped(address indexed creator, address indexed token, address indexed tokenMapped);
     
     function createMappableToken(string memory name, string memory symbol, uint8 decimals, uint totalSupply) external payable returns (address mappableToken) {
-        _chargeFee();
+        if(_msgSender() != governor)
+            _chargeFee(config[_feeCreate_]);
         require(mappableTokens[_msgSender()] == address(0), 'MappableToken created already');
 
         bytes32 salt = keccak256(abi.encodePacked(_chainId(), _msgSender()));
@@ -2368,12 +2402,12 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         InitializableProductProxy(payable(mappableToken)).__InitializableProductProxy_init(address(this), _MappableToken_, abi.encodeWithSignature('__MappableToken_init(address,address,string,string,uint8,uint256)', address(this), _msgSender(), name, symbol, decimals, totalSupply));
         
         mappableTokens[_msgSender()] = mappableToken;
+        _initAuthQuotas(mappableToken, totalSupply);
         emit CreateMappableToken(_msgSender(), name, symbol, decimals, totalSupply, mappableToken);
     }
     event CreateMappableToken(address indexed creator, string name, string symbol, uint8 decimals, uint totalSupply, address indexed mappableToken);
     
     function _createMappingToken(uint mainChainId, address token, address creator, string memory name, string memory symbol, uint8 decimals, uint cap) internal returns (address mappingToken) {
-        _chargeFee();
         address tokenOrCreator = (token == address(0)) ? creator : token;
         require(mappingTokens[mainChainId][tokenOrCreator] == address(0), 'MappingToken created already');
 
@@ -2386,6 +2420,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         InitializableProductProxy(payable(mappingToken)).__InitializableProductProxy_init(address(this), _MappingToken_, abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', address(this), mainChainId, token, creator, name, symbol, decimals, cap));
         
         mappingTokens[mainChainId][tokenOrCreator] = mappingToken;
+        _initAuthQuotas(mappingToken, cap);
         emit CreateMappingToken(mainChainId, token, creator, name, symbol, decimals, cap, mappingToken);
     }
     event CreateMappingToken(uint mainChainId, address indexed token, address indexed creator, string name, string symbol, uint8 decimals, uint cap, address indexed mappingToken);
@@ -2395,6 +2430,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     
     function createMappingToken(uint mainChainId, address token, string memory name, string memory symbol, uint8 decimals, uint cap, Signature[] memory signatures) public payable returns (address mappingToken) {
+        _chargeFee(config[_feeCreate_]);
         uint N = signatures.length;
         require(N >= getConfig(_minSignatures_), 'too few signatures');
         for(uint i=0; i<N; i++) {
@@ -2412,8 +2448,8 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event AuthorizeCreate(uint mainChainId, address indexed token, address indexed creator, string name, string symbol, uint8 decimals, uint cap, address indexed signatory);
     
-    function _chargeFee() virtual internal {
-        require(msg.value >= Math.min(config[_feeCreate_], 1 ether), 'fee for Create is too low');
+    function _chargeFee(uint fee) virtual internal {
+        require(msg.value >= Math.min(fee, 1 ether), 'fee is too low');
         address payable feeTo = address(config[_feeTo_]);
         if(feeTo == address(0))
             feeTo = address(uint160(address(this)));
@@ -2422,6 +2458,6 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event ChargeFee(address indexed from, address indexed to, uint value);
 
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 }
 
