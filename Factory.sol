@@ -1308,7 +1308,7 @@ abstract contract ERC20CappedUpgradeSafe is Initializable, ERC20UpgradeSafe {
     /**
      * @dev Returns the cap on the token's total supply.
      */
-    function cap() public view returns (uint256) {
+    function cap() virtual public view returns (uint256) {
         return _cap;
     }
 
@@ -1700,7 +1700,9 @@ contract Constants {
     bytes32 internal constant _feeRegister_     = 'feeRegister';
     bytes32 internal constant _feeTo_           = 'feeTo';
     bytes32 internal constant _minSignatures_   = 'minSignatures';
-    bytes32 internal constant _initAuthQuotaRatio_  = 'initAuthQuotaRatio';
+    bytes32 internal constant _initQuotaRatio_  = 'initQuotaRatio';
+    bytes32 internal constant _autoQuotaRatio_  = 'autoQuotaRatio';
+    bytes32 internal constant _autoQuotaPeriod_ = 'autoQuotaPeriod';
     bytes32 internal constant _uniswapRounter_  = 'uniswapRounter';
     
     function _chainId() internal pure returns (uint id) {
@@ -1728,16 +1730,46 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     address public token;
     address public creator;
     
-    mapping (address => uint) public authQuotaOf;                                       // signatory => quota
+    mapping (address => uint) internal _authQuotas;                                     // signatory => quota
     mapping (uint => mapping (address => uint)) public sentCount;                       // toChainId => to => sentCount
     mapping (uint => mapping (address => mapping (uint => uint))) public sent;          // toChainId => to => nonce => volume
     mapping (uint => mapping (address => mapping (uint => uint))) public received;      // fromChainId => to => nonce => volume
+    mapping (address => uint) public lasttimeUpdateQuotaOf;                             // signatory => lasttime
+    uint public autoQuotaRatio;
+    uint public autoQuotaPeriod;
+    
+    function setAutoQuota(uint ratio, uint period) virtual external onlyFactory {
+        autoQuotaRatio  = ratio;
+        autoQuotaPeriod = period;
+    }
     
     modifier onlyFactory {
         require(msg.sender == factory, 'Only called by Factory');
         _;
     }
     
+    modifier updateAutoQuota(address signatory) virtual {
+        uint quota = authQuotaOf(signatory);
+        if(_authQuotas[signatory] != quota) {
+            _authQuotas[signatory] = quota;
+            lasttimeUpdateQuotaOf[signatory] = now;
+        }
+        _;
+    }
+    
+    function authQuotaOf(address signatory) virtual public view returns (uint quota) {
+        quota = _authQuotas[signatory];
+        uint ratio  = autoQuotaRatio  != 0 ? autoQuotaRatio  : Factory(factory).getConfig(_autoQuotaRatio_);
+        uint period = autoQuotaPeriod != 0 ? autoQuotaPeriod : Factory(factory).getConfig(_autoQuotaPeriod_);
+        if(ratio == 0 || period == 0 || period == uint(-1))
+            return quota;
+        uint quotaCap = cap().mul(ratio).div(1e18);
+        uint delta = quotaCap.mul(now.sub(lasttimeUpdateQuotaOf[signatory])).div(period);
+        return Math.max(quota, Math.min(quotaCap, quota.add(delta)));
+    }
+    
+    function cap() public view virtual returns (uint);
+
     function increaseAuthQuotas(address[] memory signatories, uint[] memory increments) virtual external returns (uint[] memory quotas) {
         require(signatories.length == increments.length, 'two array lenth not equal');
         quotas = new uint[](signatories.length);
@@ -1745,9 +1777,9 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
             quotas[i] = increaseAuthQuota(signatories[i], increments[i]);
     }
     
-    function increaseAuthQuota(address signatory, uint increment) virtual public onlyFactory returns (uint quota) {
-        quota = authQuotaOf[signatory].add(increment);
-        authQuotaOf[signatory] = quota;
+    function increaseAuthQuota(address signatory, uint increment) virtual public updateAutoQuota(signatory) onlyFactory returns (uint quota) {
+        quota = _authQuotas[signatory].add(increment);
+        _authQuotas[signatory] = quota;
         emit IncreaseAuthQuota(signatory, increment, quota);
     }
     event IncreaseAuthQuota(address indexed signatory, uint increment, uint quota);
@@ -1760,19 +1792,19 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     }
     
     function decreaseAuthQuota(address signatory, uint decrement) virtual public onlyFactory returns (uint quota) {
-        quota = authQuotaOf[signatory];
+        quota = authQuotaOf(signatory);
         if(quota < decrement)
             decrement = quota;
         return _decreaseAuthQuota(signatory, decrement);
     }
     
-    function _decreaseAuthQuota(address signatory, uint decrement) virtual internal returns (uint quota) {
-        quota = authQuotaOf[signatory].sub(decrement);
-        authQuotaOf[signatory] = quota;
+    function _decreaseAuthQuota(address signatory, uint decrement) virtual internal updateAutoQuota(signatory) returns (uint quota) {
+        quota = _authQuotas[signatory].sub(decrement);
+        _authQuotas[signatory] = quota;
         emit DecreaseAuthQuota(signatory, decrement, quota);
     }
     event DecreaseAuthQuota(address indexed signatory, uint decrement, uint quota);
-
+    
 
     function needApprove() virtual public pure returns (bool);
     
@@ -1826,7 +1858,7 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     }
     event ChargeFee(address indexed from, address indexed to, uint value);
 
-    uint256[50] private __gap;
+    uint256[47] private __gap;
 }    
     
     
@@ -1846,6 +1878,10 @@ contract TokenMapped is MappingBase {
         _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(ERC20UpgradeSafe(token).name())), _chainId(), address(this)));
 	}
 	
+    function cap() virtual override public view returns (uint) {
+        return IERC20(token).totalSupply();
+    }
+    
     function totalMapped() virtual public view returns (uint) {
         return IERC20(token).balanceOf(address(this));
     }
@@ -2005,8 +2041,8 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
         return MappingBase.DOMAIN_SEPARATOR();
     }
     
-    function _approve(address owner, address spender, uint256 amount) virtual override(Permit, ERC20UpgradeSafe) internal {
-        return ERC20UpgradeSafe._approve(owner, spender, amount);
+    function cap() virtual override public view returns (uint) {
+        return totalSupply();
     }
     
     function totalMapped() virtual public view returns (uint) {
@@ -2015,6 +2051,10 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
     
     function needApprove() virtual override public pure returns (bool) {
         return false;
+    }
+    
+    function _approve(address owner, address spender, uint256 amount) virtual override(Permit, ERC20UpgradeSafe) internal {
+        return ERC20UpgradeSafe._approve(owner, spender, amount);
     }
     
     function _sendFrom(address from, uint volume) virtual override internal {
@@ -2050,12 +2090,16 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
         return MappingBase.DOMAIN_SEPARATOR();
     }
     
-    function _approve(address owner, address spender, uint256 amount) virtual override(Permit, ERC20UpgradeSafe) internal {
-        return ERC20UpgradeSafe._approve(owner, spender, amount);
+    function cap() virtual override(ERC20CappedUpgradeSafe, MappingBase) public view returns (uint) {
+        return ERC20CappedUpgradeSafe.cap();
     }
     
     function needApprove() virtual override public pure returns (bool) {
         return false;
+    }
+    
+    function _approve(address owner, address spender, uint256 amount) virtual override(Permit, ERC20UpgradeSafe) internal {
+        return ERC20UpgradeSafe._approve(owner, spender, amount);
     }
     
     function _sendFrom(address from, uint volume) virtual override internal {
@@ -2120,7 +2164,9 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         config[_feeRegister_]                   = 0.200 ether;
         config[_feeTo_]                         = uint(_feeTo);
         config[_minSignatures_]                 = 3;
-        config[_initAuthQuotaRatio_]            = 0.100 ether;  // 10%
+        config[_initQuotaRatio_]                = 0.100 ether;  // 10%
+        config[_autoQuotaRatio_]                = 0.010 ether;  //  1%
+        config[_autoQuotaPeriod_]               = 1 days;
         config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
@@ -2145,13 +2191,21 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event SetAuthorty(address indexed authorty, bool indexed enable);
     
+    function setAutoQuota(address mappingTokenMapped, uint ratio, uint period) virtual external governance {
+        if(mappingTokenMapped == address(0)) {
+            config[_autoQuotaRatio_]  = ratio;
+            config[_autoQuotaPeriod_] = period;
+        } else
+            MappingBase(mappingTokenMapped).setAutoQuota(ratio, period);
+    }
+    
     modifier onlyAuthorty {
         require(authorties[_msgSender()], 'only authorty');
         _;
     }
     
     function _initAuthQuotas(address mappingTokenMapped, uint cap) internal {
-        uint quota = cap.mul(config[_initAuthQuotaRatio_]).div(1e18);
+        uint quota = cap.mul(config[_initQuotaRatio_]).div(1e18);
         uint[] memory quotas = new uint[](signatories.length);
         for(uint i=0; i<quotas.length; i++)
             quotas[i] = quota;
