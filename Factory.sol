@@ -1402,6 +1402,627 @@ library SafeERC20 {
 }
 
 
+// https://github.com/hamdiallam/Solidity-RLP/blob/master/contracts/RLPReader.sol
+/*
+* @author Hamdi Allam hamdi.allam97@gmail.com
+* Please reach out with any questions or concerns
+*/
+pragma solidity >=0.5.0 <0.7.0;
+
+library RLPReader {
+    uint8 constant STRING_SHORT_START = 0x80;
+    uint8 constant STRING_LONG_START  = 0xb8;
+    uint8 constant LIST_SHORT_START   = 0xc0;
+    uint8 constant LIST_LONG_START    = 0xf8;
+    uint8 constant WORD_SIZE = 32;
+
+    struct RLPItem {
+        uint len;
+        uint memPtr;
+    }
+
+    struct Iterator {
+        RLPItem item;   // Item that's being iterated over.
+        uint nextPtr;   // Position of the next item in the list.
+    }
+
+    /*
+    * @dev Returns the next element in the iteration. Reverts if it has not next element.
+    * @param self The iterator.
+    * @return The next element in the iteration.
+    */
+    function next(Iterator memory self) internal pure returns (RLPItem memory) {
+        require(hasNext(self));
+
+        uint ptr = self.nextPtr;
+        uint itemLength = _itemLength(ptr);
+        self.nextPtr = ptr + itemLength;
+
+        return RLPItem(itemLength, ptr);
+    }
+
+    /*
+    * @dev Returns true if the iteration has more elements.
+    * @param self The iterator.
+    * @return true if the iteration has more elements.
+    */
+    function hasNext(Iterator memory self) internal pure returns (bool) {
+        RLPItem memory item = self.item;
+        return self.nextPtr < item.memPtr + item.len;
+    }
+
+    /*
+    * @param item RLP encoded bytes
+    */
+    function toRlpItem(bytes memory item) internal pure returns (RLPItem memory) {
+        uint memPtr;
+        assembly {
+            memPtr := add(item, 0x20)
+        }
+
+        return RLPItem(item.length, memPtr);
+    }
+
+    /*
+    * @dev Create an iterator. Reverts if item is not a list.
+    * @param self The RLP item.
+    * @return An 'Iterator' over the item.
+    */
+    function iterator(RLPItem memory self) internal pure returns (Iterator memory) {
+        require(isList(self));
+
+        uint ptr = self.memPtr + _payloadOffset(self.memPtr);
+        return Iterator(self, ptr);
+    }
+
+    /*
+    * @param the RLP item.
+    */
+    function rlpLen(RLPItem memory item) internal pure returns (uint) {
+        return item.len;
+    }
+
+    /*
+     * @param the RLP item.
+     * @return (memPtr, len) pair: location of the item's payload in memory.
+     */
+    function payloadLocation(RLPItem memory item) internal pure returns (uint, uint) {
+        uint offset = _payloadOffset(item.memPtr);
+        uint memPtr = item.memPtr + offset;
+        uint len = item.len - offset; // data length
+        return (memPtr, len);
+    }
+
+    /*
+    * @param the RLP item.
+    */
+    function payloadLen(RLPItem memory item) internal pure returns (uint) {
+        (, uint len) = payloadLocation(item);
+        return len;
+    }
+
+    /*
+    * @param the RLP item containing the encoded list.
+    */
+    function toList(RLPItem memory item) internal pure returns (RLPItem[] memory) {
+        require(isList(item));
+
+        uint items = numItems(item);
+        RLPItem[] memory result = new RLPItem[](items);
+
+        uint memPtr = item.memPtr + _payloadOffset(item.memPtr);
+        uint dataLen;
+        for (uint i = 0; i < items; i++) {
+            dataLen = _itemLength(memPtr);
+            result[i] = RLPItem(dataLen, memPtr); 
+            memPtr = memPtr + dataLen;
+        }
+
+        return result;
+    }
+
+    // @return indicator whether encoded payload is a list. negate this function call for isData.
+    function isList(RLPItem memory item) internal pure returns (bool) {
+        if (item.len == 0) return false;
+
+        uint8 byte0;
+        uint memPtr = item.memPtr;
+        assembly {
+            byte0 := byte(0, mload(memPtr))
+        }
+
+        if (byte0 < LIST_SHORT_START)
+            return false;
+        return true;
+    }
+
+    /*
+     * @dev A cheaper version of keccak256(toRlpBytes(item)) that avoids copying memory.
+     * @return keccak256 hash of RLP encoded bytes.
+     */
+    function rlpBytesKeccak256(RLPItem memory item) internal pure returns (bytes32) {
+        uint256 ptr = item.memPtr;
+        uint256 len = item.len;
+        bytes32 result;
+        assembly {
+            result := keccak256(ptr, len)
+        }
+        return result;
+    }
+
+    /*
+     * @dev A cheaper version of keccak256(toBytes(item)) that avoids copying memory.
+     * @return keccak256 hash of the item payload.
+     */
+    function payloadKeccak256(RLPItem memory item) internal pure returns (bytes32) {
+        (uint memPtr, uint len) = payloadLocation(item);
+        bytes32 result;
+        assembly {
+            result := keccak256(memPtr, len)
+        }
+        return result;
+    }
+
+    /** RLPItem conversions into data types **/
+
+    // @returns raw rlp encoding in bytes
+    function toRlpBytes(RLPItem memory item) internal pure returns (bytes memory) {
+        bytes memory result = new bytes(item.len);
+        if (result.length == 0) return result;
+        
+        uint ptr;
+        assembly {
+            ptr := add(0x20, result)
+        }
+
+        copy(item.memPtr, ptr, item.len);
+        return result;
+    }
+
+    // any non-zero byte except "0x80" is considered true
+    function toBoolean(RLPItem memory item) internal pure returns (bool) {
+        require(item.len == 1);
+        uint result;
+        uint memPtr = item.memPtr;
+        assembly {
+            result := byte(0, mload(memPtr))
+        }
+
+        // SEE Github Issue #5.
+        // Summary: Most commonly used RLP libraries (i.e Geth) will encode
+        // "0" as "0x80" instead of as "0". We handle this edge case explicitly
+        // here.
+        if (result == 0 || result == STRING_SHORT_START) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    function toAddress(RLPItem memory item) internal pure returns (address) {
+        // 1 byte for the length prefix
+        require(item.len == 21);
+
+        return address(toUint(item));
+    }
+
+    function toUint(RLPItem memory item) internal pure returns (uint) {
+        require(item.len > 0 && item.len <= 33);
+
+        (uint memPtr, uint len) = payloadLocation(item);
+
+        uint result;
+        assembly {
+            result := mload(memPtr)
+
+            // shfit to the correct location if neccesary
+            if lt(len, 32) {
+                result := div(result, exp(256, sub(32, len)))
+            }
+        }
+
+        return result;
+    }
+
+    // enforces 32 byte length
+    function toUintStrict(RLPItem memory item) internal pure returns (uint) {
+        // one byte prefix
+        require(item.len == 33);
+
+        uint result;
+        uint memPtr = item.memPtr + 1;
+        assembly {
+            result := mload(memPtr)
+        }
+
+        return result;
+    }
+
+    function toBytes(RLPItem memory item) internal pure returns (bytes memory) {
+        require(item.len > 0);
+
+        (uint memPtr, uint len) = payloadLocation(item);
+        bytes memory result = new bytes(len);
+
+        uint destPtr;
+        assembly {
+            destPtr := add(0x20, result)
+        }
+
+        copy(memPtr, destPtr, len);
+        return result;
+    }
+
+    /*
+    * Private Helpers
+    */
+
+    // @return number of payload items inside an encoded list.
+    function numItems(RLPItem memory item) private pure returns (uint) {
+        if (item.len == 0) return 0;
+
+        uint count = 0;
+        uint currPtr = item.memPtr + _payloadOffset(item.memPtr);
+        uint endPtr = item.memPtr + item.len;
+        while (currPtr < endPtr) {
+           currPtr = currPtr + _itemLength(currPtr); // skip over an item
+           count++;
+        }
+
+        return count;
+    }
+
+    // @return entire rlp item byte length
+    function _itemLength(uint memPtr) private pure returns (uint) {
+        uint itemLen;
+        uint byte0;
+        assembly {
+            byte0 := byte(0, mload(memPtr))
+        }
+
+        if (byte0 < STRING_SHORT_START)
+            itemLen = 1;
+        
+        else if (byte0 < STRING_LONG_START)
+            itemLen = byte0 - STRING_SHORT_START + 1;
+
+        else if (byte0 < LIST_SHORT_START) {
+            assembly {
+                let byteLen := sub(byte0, 0xb7) // # of bytes the actual length is
+                memPtr := add(memPtr, 1) // skip over the first byte
+                
+                /* 32 byte word size */
+                let dataLen := div(mload(memPtr), exp(256, sub(32, byteLen))) // right shifting to get the len
+                itemLen := add(dataLen, add(byteLen, 1))
+            }
+        }
+
+        else if (byte0 < LIST_LONG_START) {
+            itemLen = byte0 - LIST_SHORT_START + 1;
+        } 
+
+        else {
+            assembly {
+                let byteLen := sub(byte0, 0xf7)
+                memPtr := add(memPtr, 1)
+
+                let dataLen := div(mload(memPtr), exp(256, sub(32, byteLen))) // right shifting to the correct length
+                itemLen := add(dataLen, add(byteLen, 1))
+            }
+        }
+
+        return itemLen;
+    }
+
+    // @return number of bytes until the data
+    function _payloadOffset(uint memPtr) private pure returns (uint) {
+        uint byte0;
+        assembly {
+            byte0 := byte(0, mload(memPtr))
+        }
+
+        if (byte0 < STRING_SHORT_START) 
+            return 0;
+        else if (byte0 < STRING_LONG_START || (byte0 >= LIST_SHORT_START && byte0 < LIST_LONG_START))
+            return 1;
+        else if (byte0 < LIST_SHORT_START)  // being explicit
+            return byte0 - (STRING_LONG_START - 1) + 1;
+        else
+            return byte0 - (LIST_LONG_START - 1) + 1;
+    }
+
+    /*
+    * @param src Pointer to source
+    * @param dest Pointer to destination
+    * @param len Amount of memory to copy from the source
+    */
+    function copy(uint src, uint dest, uint len) private pure {
+        if (len == 0) return;
+
+        // copy as many word sizes as possible
+        for (; len >= WORD_SIZE; len -= WORD_SIZE) {
+            assembly {
+                mstore(dest, mload(src))
+            }
+
+            src += WORD_SIZE;
+            dest += WORD_SIZE;
+        }
+
+        // left over bytes. Mask is used to remove unwanted bytes from the word
+        uint mask = 256 ** (WORD_SIZE - len) - 1;
+        assembly {
+            let srcpart := and(mload(src), not(mask)) // zero out src
+            let destpart := and(mload(dest), mask) // retrieve the bytes
+            mstore(dest, or(destpart, srcpart))
+        }
+    }
+}
+
+
+// https://github.com/bakaoh/solidity-rlp-encode/blob/master/contracts/RLPEncode.sol
+/**
+ * @title RLPEncode
+ * @dev A simple RLP encoding library.
+ * @author Bakaoh
+ */
+library RLPEncode {
+    /*
+     * Internal functions
+     */
+
+    /**
+     * @dev RLP encodes a byte string.
+     * @param self The byte string to encode.
+     * @return The RLP encoded string in bytes.
+     */
+    function encodeBytes(bytes memory self) internal pure returns (bytes memory) {
+        bytes memory encoded;
+        if (self.length == 1 && uint8(self[0]) <= 128) {
+            encoded = self;
+        } else {
+            encoded = concat(encodeLength(self.length, 128), self);
+        }
+        return encoded;
+    }
+
+    /**
+     * @dev RLP encodes a list of RLP encoded byte byte strings.
+     * @param self The list of RLP encoded byte strings.
+     * @return The RLP encoded list of items in bytes.
+     */
+    function encodeList(bytes[] memory self) internal pure returns (bytes memory) {
+        bytes memory list = flatten(self);
+        return concat(encodeLength(list.length, 192), list);
+    }
+
+    /**
+     * @dev RLP encodes a string.
+     * @param self The string to encode.
+     * @return The RLP encoded string in bytes.
+     */
+    function encodeString(string memory self) internal pure returns (bytes memory) {
+        return encodeBytes(bytes(self));
+    }
+
+    /** 
+     * @dev RLP encodes an address.
+     * @param self The address to encode.
+     * @return The RLP encoded address in bytes.
+     */
+    function encodeAddress(address self) internal pure returns (bytes memory) {
+        bytes memory inputBytes;
+        assembly {
+            let m := mload(0x40)
+            mstore(add(m, 20), xor(0x140000000000000000000000000000000000000000, self))
+            mstore(0x40, add(m, 52))
+            inputBytes := m
+        }
+        return encodeBytes(inputBytes);
+    }
+
+    /** 
+     * @dev RLP encodes a uint.
+     * @param self The uint to encode.
+     * @return The RLP encoded uint in bytes.
+     */
+    function encodeUint(uint self) internal pure returns (bytes memory) {
+        return encodeBytes(toBinary(self));
+    }
+
+    /** 
+     * @dev RLP encodes an int.
+     * @param self The int to encode.
+     * @return The RLP encoded int in bytes.
+     */
+    function encodeInt(int self) internal pure returns (bytes memory) {
+        return encodeUint(uint(self));
+    }
+
+    /** 
+     * @dev RLP encodes a bool.
+     * @param self The bool to encode.
+     * @return The RLP encoded bool in bytes.
+     */
+    function encodeBool(bool self) internal pure returns (bytes memory) {
+        bytes memory encoded = new bytes(1);
+        encoded[0] = (self ? bytes1(0x01) : bytes1(0x80));
+        return encoded;
+    }
+
+
+    /*
+     * Private functions
+     */
+
+    /**
+     * @dev Encode the first byte, followed by the `len` in binary form if `length` is more than 55.
+     * @param len The length of the string or the payload.
+     * @param offset 128 if item is string, 192 if item is list.
+     * @return RLP encoded bytes.
+     */
+    function encodeLength(uint len, uint offset) private pure returns (bytes memory) {
+        bytes memory encoded;
+        if (len < 56) {
+            encoded = new bytes(1);
+            encoded[0] = bytes32(len + offset)[31];
+        } else {
+            uint lenLen;
+            uint i = 1;
+            while (len / i != 0) {
+                lenLen++;
+                i *= 256;
+            }
+
+            encoded = new bytes(lenLen + 1);
+            encoded[0] = bytes32(lenLen + offset + 55)[31];
+            for(i = 1; i <= lenLen; i++) {
+                encoded[i] = bytes32((len / (256**(lenLen-i))) % 256)[31];
+            }
+        }
+        return encoded;
+    }
+
+    /**
+     * @dev Encode integer in big endian binary form with no leading zeroes.
+     * @notice TODO: This should be optimized with assembly to save gas costs.
+     * @param _x The integer to encode.
+     * @return RLP encoded bytes.
+     */
+    function toBinary(uint _x) private pure returns (bytes memory) {
+        bytes memory b = new bytes(32);
+        assembly { 
+            mstore(add(b, 32), _x) 
+        }
+        uint i;
+        for (i = 0; i < 32; i++) {
+            if (b[i] != 0) {
+                break;
+            }
+        }
+        bytes memory res = new bytes(32 - i);
+        for (uint j = 0; j < res.length; j++) {
+            res[j] = b[i++];
+        }
+        return res;
+    }
+
+    /**
+     * @dev Copies a piece of memory to another location.
+     * @notice From: https://github.com/Arachnid/solidity-stringutils/blob/master/src/strings.sol.
+     * @param _dest Destination location.
+     * @param _src Source location.
+     * @param _len Length of memory to copy.
+     */
+    function memcpy(uint _dest, uint _src, uint _len) private pure {
+        uint dest = _dest;
+        uint src = _src;
+        uint len = _len;
+
+        for(; len >= 32; len -= 32) {
+            assembly {
+                mstore(dest, mload(src))
+            }
+            dest += 32;
+            src += 32;
+        }
+
+        uint mask = 256 ** (32 - len) - 1;
+        assembly {
+            let srcpart := and(mload(src), not(mask))
+            let destpart := and(mload(dest), mask)
+            mstore(dest, or(destpart, srcpart))
+        }
+    }
+
+    /**
+     * @dev Flattens a list of byte strings into one byte string.
+     * @notice From: https://github.com/sammayo/solidity-rlp-encoder/blob/master/RLPEncode.sol.
+     * @param _list List of byte strings to flatten.
+     * @return The flattened byte string.
+     */
+    function flatten(bytes[] memory _list) private pure returns (bytes memory) {
+        if (_list.length == 0) {
+            return new bytes(0);
+        }
+
+        uint len;
+        uint i;
+        for (i = 0; i < _list.length; i++) {
+            len += _list[i].length;
+        }
+
+        bytes memory flattened = new bytes(len);
+        uint flattenedPtr;
+        assembly { flattenedPtr := add(flattened, 0x20) }
+
+        for(i = 0; i < _list.length; i++) {
+            bytes memory item = _list[i];
+            
+            uint listPtr;
+            assembly { listPtr := add(item, 0x20)}
+
+            memcpy(flattenedPtr, listPtr, item.length);
+            flattenedPtr += _list[i].length;
+        }
+
+        return flattened;
+    }
+
+    /**
+     * @dev Concatenates two bytes.
+     * @notice From: https://github.com/GNSPS/solidity-bytes-utils/blob/master/contracts/BytesLib.sol.
+     * @param _preBytes First byte string.
+     * @param _postBytes Second byte string.
+     * @return Both byte string combined.
+     */
+    function concat(bytes memory _preBytes, bytes memory _postBytes) private pure returns (bytes memory) {
+        bytes memory tempBytes;
+
+        assembly {
+            tempBytes := mload(0x40)
+
+            let length := mload(_preBytes)
+            mstore(tempBytes, length)
+
+            let mc := add(tempBytes, 0x20)
+            let end := add(mc, length)
+
+            for {
+                let cc := add(_preBytes, 0x20)
+            } lt(mc, end) {
+                mc := add(mc, 0x20)
+                cc := add(cc, 0x20)
+            } {
+                mstore(mc, mload(cc))
+            }
+
+            length := mload(_postBytes)
+            mstore(tempBytes, add(length, mload(tempBytes)))
+
+            mc := end
+            end := add(mc, length)
+
+            for {
+                let cc := add(_postBytes, 0x20)
+            } lt(mc, end) {
+                mc := add(mc, 0x20)
+                cc := add(cc, 0x20)
+            } {
+                mstore(mc, mload(cc))
+            }
+
+            mstore(0x40, and(
+              add(add(end, iszero(add(length, mload(_preBytes)))), 31),
+              not(31)
+            ))
+        }
+
+        return tempBytes;
+    }
+}
+
+
 contract Governable is Initializable {
     address public governor;
 
@@ -1699,11 +2320,12 @@ contract Constants {
     bytes32 internal constant _feeCreate_       = 'feeCreate';
     bytes32 internal constant _feeRegister_     = 'feeRegister';
     bytes32 internal constant _feeTo_           = 'feeTo';
+    bytes32 internal constant _onlyDeployer_    = 'onlyDeployer';
     bytes32 internal constant _minSignatures_   = 'minSignatures';
     bytes32 internal constant _initQuotaRatio_  = 'initQuotaRatio';
     bytes32 internal constant _autoQuotaRatio_  = 'autoQuotaRatio';
     bytes32 internal constant _autoQuotaPeriod_ = 'autoQuotaPeriod';
-    bytes32 internal constant _uniswapRounter_  = 'uniswapRounter';
+    //bytes32 internal constant _uniswapRounter_  = 'uniswapRounter';
     
     function _chainId() internal pure returns (uint id) {
         assembly { id := chainid() }
@@ -1728,7 +2350,7 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     address public factory;
     uint256 public mainChainId;
     address public token;
-    address public creator;
+    address public deployer;
     
     mapping (address => uint) internal _authQuotas;                                     // signatory => quota
     mapping (uint => mapping (address => uint)) public sentCount;                       // toChainId => to => sentCount
@@ -1874,7 +2496,7 @@ contract TokenMapped is MappingBase {
         factory = factory_;
         mainChainId = _chainId();
         token = token_;
-        creator = address(0);
+        deployer = address(0);
         _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(ERC20UpgradeSafe(token).name())), _chainId(), address(this)));
 	}
 	
@@ -2021,19 +2643,19 @@ abstract contract Permit {
 }
 
 contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
-	function __MappableToken_init(address factory_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint256 totalSupply_) external initializer {
+	function __MappableToken_init(address factory_, address deployer_, string memory name_, string memory symbol_, uint8 decimals_, uint256 totalSupply_) external initializer {
         __Context_init_unchained();
 		__ERC20_init_unchained(name_, symbol_);
 		_setupDecimals(decimals_);
-		_mint(creator_, totalSupply_);
-		__MappableToken_init_unchained(factory_, creator_);
+		_mint(deployer_, totalSupply_);
+		__MappableToken_init_unchained(factory_, deployer_);
 	}
 	
-	function __MappableToken_init_unchained(address factory_, address creator_) public initializer {
+	function __MappableToken_init_unchained(address factory_, address deployer_) public initializer {
         factory = factory_;
         mainChainId = _chainId();
         token = address(0);
-        creator = creator_;
+        deployer = deployer_;
         _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), _chainId(), address(this)));
 	}
 	
@@ -2070,19 +2692,19 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
 
 
 contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
-	function __MappingToken_init(address factory_, uint mainChainId_, address token_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) external initializer {
+	function __MappingToken_init(address factory_, uint mainChainId_, address token_, address deployer_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) external initializer {
         __Context_init_unchained();
 		__ERC20_init_unchained(name_, symbol_);
 		_setupDecimals(decimals_);
 		__ERC20Capped_init_unchained(cap_);
-		__MappingToken_init_unchained(factory_, mainChainId_, token_, creator_);
+		__MappingToken_init_unchained(factory_, mainChainId_, token_, deployer_);
 	}
 	
-	function __MappingToken_init_unchained(address factory_, uint mainChainId_, address token_, address creator_) public initializer {
+	function __MappingToken_init_unchained(address factory_, uint mainChainId_, address token_, address deployer_) public initializer {
         factory = factory_;
         mainChainId = mainChainId_;
         token = token_;
-        creator = (token_ == address(0)) ? creator_ : address(0);
+        deployer = (token_ == address(0)) ? deployer_ : address(0);
         _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name())), _chainId(), address(this)));
 	}
 	
@@ -2117,13 +2739,13 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
 
 
 contract MappingTokenProxy is ProductProxy, Constants {
-    constructor(address factory_, uint mainChainId_, address token_, address creator_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) public {
+    constructor(address factory_, uint mainChainId_, address token_, address deployer_, string memory name_, string memory symbol_, uint8 decimals_, uint cap_) public {
         //require(_factory() == address(0));
         assert(FACTORY_SLOT == bytes32(uint256(keccak256('eip1967.proxy.factory')) - 1));
         assert(NAME_SLOT    == bytes32(uint256(keccak256('eip1967.proxy.name')) - 1));
         _setFactory(factory_);
         _setName(_MappingToken_);
-        (bool success,) = _implementation().delegatecall(abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', factory_, mainChainId_, token_, creator_, name_, symbol_, decimals_, cap_));
+        (bool success,) = _implementation().delegatecall(abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', factory_, mainChainId_, token_, deployer_, name_, symbol_, decimals_, cap_));
         require(success);
     }  
 }
@@ -2134,14 +2756,14 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     using SafeMath for uint;
 
     bytes32 public constant REGISTER_TYPEHASH   = keccak256("RegisterMapping(uint mainChainId,address token,uint[] chainIds,address[] mappingTokenMappeds,address signatory)");
-    bytes32 public constant CREATE_TYPEHASH     = keccak256("CreateMappingToken(address creator,uint mainChainId,address token,string name,string symbol,uint8 decimals,uint cap,address signatory)");
+    bytes32 public constant CREATE_TYPEHASH     = keccak256("CreateMappingToken(address deployer,uint mainChainId,address token,string name,string symbol,uint8 decimals,uint cap,address signatory)");
     bytes32 public constant DOMAIN_TYPEHASH     = keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)");
     bytes32 public DOMAIN_SEPARATOR;
 
     mapping (bytes32 => address) public productImplementations;
     mapping (address => address) public tokenMappeds;                // token => tokenMapped
-    mapping (address => address) public mappableTokens;              // creator => mappableTokens
-    mapping (uint256 => mapping (address => address)) public mappingTokens;     // mainChainId => token or creator => mappableTokens
+    mapping (address => address) public mappableTokens;              // deployer => mappableTokens
+    mapping (uint256 => mapping (address => address)) public mappingTokens;     // mainChainId => token or deployer => mappableTokens
     mapping (address => bool) public authorties;
     
     // only on ethereum mainnet
@@ -2163,11 +2785,12 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         config[_feeCreate_]                     = 0.100 ether;
         config[_feeRegister_]                   = 0.200 ether;
         config[_feeTo_]                         = uint(_feeTo);
+        config[_onlyDeployer_]                  = 1;
         config[_minSignatures_]                 = 3;
         config[_initQuotaRatio_]                = 0.100 ether;  // 10%
         config[_autoQuotaRatio_]                = 0.010 ether;  //  1%
         config[_autoQuotaPeriod_]               = 1 days;
-        config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
+        //config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
         upgradeProductImplementationsTo_(_implTokenMapped, _implMappableToken, _implMappingToken);
@@ -2183,7 +2806,9 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     
     function setSignatories(address[] calldata signatories_) virtual external governance {
         signatories = signatories_;
+        emit SetSignatories(signatories_);
     }
+    event SetSignatories(address[] signatories_);
     
     function setAuthorty_(address authorty, bool enable) virtual external governance {
         authorties[authorty] = enable;
@@ -2337,6 +2962,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         require(isSupportChainId(mainChainId), 'Not support mainChainId');
         for(uint i=0; i<chainIds.length; i++) {
             require(isSupportChainId(chainIds[i]), 'Not support chainId');
+            require(token == mappingTokenMappeds_[i] || mappingTokenMappeds_[i] == calcMapping(mainChainId, token) || _msgSender() == governor, 'invalid mappingTokenMapped address');
             //require(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0 || _mainChainIdTokens[mappingTokenMappeds_[i]] == (mainChainId << 160) | uint(token), 'mainChainIdTokens exist already');
             //require(mappingTokenMappeds[token][chainIds[i]] == address(0), 'mappingTokenMappeds exist already');
             //if(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0)
@@ -2351,8 +2977,9 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         _registerMapping(mainChainId, token, chainIds, mappingTokenMappeds_);
     }
     
-    function registerMapping(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_, Signature[] memory signatures) virtual external payable {
+    function registerMapping(uint mainChainId, address token, uint nonce, uint[] memory chainIds, address[] memory mappingTokenMappeds_, Signature[] memory signatures) virtual external payable {
         _chargeFee(config[_feeRegister_]);
+        require(config[_onlyDeployer_] == 0 || token == calcContract(_msgSender(), nonce), 'only deployer');
         uint N = signatures.length;
         require(N >= getConfig(_minSignatures_), 'too few signatures');
         for(uint i=0; i<N; i++) {
@@ -2401,31 +3028,40 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event RegisterCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
     
-    function updateCertified_(string memory symbol, uint mainChainId, address token) external governance {
-        require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
-        require(isSupportChainId(mainChainId), 'Not support mainChainId');
-        //require(_certifiedTokens[symbol] == 0, 'Certified added already');
-        if(mainChainId == _chainId())
-            require(keccak256(bytes(symbol)) == keccak256(bytes(ERC20UpgradeSafe(token).symbol())), 'symbol different');
-        _certifiedTokens[symbol] = (mainChainId << 160) | uint(token);
-        //certifiedSymbols.push(symbol);
-        emit UpdateCertified(symbol, mainChainId, token);
+    //function updateCertified_(string memory symbol, uint mainChainId, address token) external governance {
+    //    require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
+    //    require(isSupportChainId(mainChainId), 'Not support mainChainId');
+    //    //require(_certifiedTokens[symbol] == 0, 'Certified added already');
+    //    if(mainChainId == _chainId())
+    //        require(keccak256(bytes(symbol)) == keccak256(bytes(ERC20UpgradeSafe(token).symbol())), 'symbol different');
+    //    _certifiedTokens[symbol] = (mainChainId << 160) | uint(token);
+    //    //certifiedSymbols.push(symbol);
+    //    emit UpdateCertified(symbol, mainChainId, token);
+    //}
+    //event UpdateCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
+    
+    function calcContract(address deployer, uint nonce) public pure returns (address) {
+        bytes[] memory list = new bytes[](2);
+        list[0] = RLPEncode.encodeAddress(deployer);
+        list[1] = RLPEncode.encodeUint(nonce);
+        return address(uint(keccak256(RLPEncode.encodeList(list))));
     }
-    event UpdateCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
     
     // calculates the CREATE2 address for a pair without making any external calls
-    function calcMapping(uint mainChainId, address tokenOrCreator) public view returns (address) {
+    function calcMapping(uint mainChainId, address tokenOrdeployer) public view returns (address) {
         return address(uint(keccak256(abi.encodePacked(
                 hex'ff',
                 address(this),
-                keccak256(abi.encodePacked(mainChainId, tokenOrCreator)),
+                keccak256(abi.encodePacked(mainChainId, tokenOrdeployer)),
 				keccak256(type(InitializableProductProxy).creationCode)                    //hex'96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f' // init code hash
             ))));
     }
 
-    function createTokenMapped(address token) external payable returns (address tokenMapped) {
-        if(_msgSender() != governor)
+    function createTokenMapped(address token, uint nonce) external payable returns (address tokenMapped) {
+        if(_msgSender() != governor) {
             _chargeFee(config[_feeCreate_]);
+            require(config[_onlyDeployer_] == 0 || token == calcContract(_msgSender(), nonce), 'only deployer');
+        }
         require(tokenMappeds[token] == address(0), 'TokenMapped created already');
 
         bytes32 salt = keccak256(abi.encodePacked(_chainId(), token));
@@ -2440,7 +3076,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         _initAuthQuotas(tokenMapped, IERC20(token).totalSupply());
         emit CreateTokenMapped(_msgSender(), token, tokenMapped);
     }
-    event CreateTokenMapped(address indexed creator, address indexed token, address indexed tokenMapped);
+    event CreateTokenMapped(address indexed deployer, address indexed token, address indexed tokenMapped);
     
     function createMappableToken(string memory name, string memory symbol, uint8 decimals, uint totalSupply) external payable returns (address mappableToken) {
         if(_msgSender() != governor)
@@ -2459,35 +3095,35 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         _initAuthQuotas(mappableToken, totalSupply);
         emit CreateMappableToken(_msgSender(), name, symbol, decimals, totalSupply, mappableToken);
     }
-    event CreateMappableToken(address indexed creator, string name, string symbol, uint8 decimals, uint totalSupply, address indexed mappableToken);
+    event CreateMappableToken(address indexed deployer, string name, string symbol, uint8 decimals, uint totalSupply, address indexed mappableToken);
     
-    function _createMappingToken(uint mainChainId, address token, address creator, string memory name, string memory symbol, uint8 decimals, uint cap) internal returns (address mappingToken) {
-        address tokenOrCreator = (token == address(0)) ? creator : token;
-        require(mappingTokens[mainChainId][tokenOrCreator] == address(0), 'MappingToken created already');
+    function _createMappingToken(uint mainChainId, address token, address deployer, string memory name, string memory symbol, uint8 decimals, uint cap) internal returns (address mappingToken) {
+        address tokenOrdeployer = (token == address(0)) ? deployer : token;
+        require(mappingTokens[mainChainId][tokenOrdeployer] == address(0), 'MappingToken created already');
 
-        bytes32 salt = keccak256(abi.encodePacked(mainChainId, tokenOrCreator));
+        bytes32 salt = keccak256(abi.encodePacked(mainChainId, tokenOrdeployer));
 
         bytes memory bytecode = type(InitializableProductProxy).creationCode;
         assembly {
             mappingToken := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
-        InitializableProductProxy(payable(mappingToken)).__InitializableProductProxy_init(address(this), _MappingToken_, abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', address(this), mainChainId, token, creator, name, symbol, decimals, cap));
+        InitializableProductProxy(payable(mappingToken)).__InitializableProductProxy_init(address(this), _MappingToken_, abi.encodeWithSignature('__MappingToken_init(address,uint256,address,address,string,string,uint8,uint256)', address(this), mainChainId, token, deployer, name, symbol, decimals, cap));
         
-        mappingTokens[mainChainId][tokenOrCreator] = mappingToken;
+        mappingTokens[mainChainId][tokenOrdeployer] = mappingToken;
         _initAuthQuotas(mappingToken, cap);
-        emit CreateMappingToken(mainChainId, token, creator, name, symbol, decimals, cap, mappingToken);
+        emit CreateMappingToken(mainChainId, token, deployer, name, symbol, decimals, cap, mappingToken);
     }
-    event CreateMappingToken(uint mainChainId, address indexed token, address indexed creator, string name, string symbol, uint8 decimals, uint cap, address indexed mappingToken);
+    event CreateMappingToken(uint mainChainId, address indexed token, address indexed deployer, string name, string symbol, uint8 decimals, uint cap, address indexed mappingToken);
     
-    function createMappingToken_(uint mainChainId, address token, address creator, string memory name, string memory symbol, uint8 decimals, uint cap) public payable governance returns (address mappingToken) {
-        return _createMappingToken(mainChainId, token, creator, name, symbol, decimals, cap);
+    function createMappingToken_(uint mainChainId, address token, address deployer, string memory name, string memory symbol, uint8 decimals, uint cap) public payable governance returns (address mappingToken) {
+        return _createMappingToken(mainChainId, token, deployer, name, symbol, decimals, cap);
     }
     
-    function createMappingToken(uint mainChainId, address token, string memory name, string memory symbol, uint8 decimals, uint cap, Signature[] memory signatures) public payable returns (address mappingToken) {
+    function createMappingToken(uint mainChainId, address token, uint nonce, string memory name, string memory symbol, uint8 decimals, uint cap, Signature[] memory signatures) public payable returns (address mappingToken) {
         _chargeFee(config[_feeCreate_]);
-        uint N = signatures.length;
-        require(N >= getConfig(_minSignatures_), 'too few signatures');
-        for(uint i=0; i<N; i++) {
+        require(token == address(0) || config[_onlyDeployer_] == 0 || token == calcContract(_msgSender(), nonce), 'only deployer');
+        require(signatures.length >= config[_minSignatures_], 'too few signatures');
+        for(uint i=0; i<signatures.length; i++) {
             for(uint j=0; j<i; j++)
                 require(signatures[i].signatory != signatures[j].signatory, 'repetitive signatory');
             bytes32 hash = keccak256(abi.encode(CREATE_TYPEHASH, _msgSender(), mainChainId, token, keccak256(bytes(name)), keccak256(bytes(symbol)), decimals, cap, signatures[i].signatory));
@@ -2500,7 +3136,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         }
         return _createMappingToken(mainChainId, token, _msgSender(), name, symbol, decimals, cap);
     }
-    event AuthorizeCreate(uint mainChainId, address indexed token, address indexed creator, string name, string symbol, uint8 decimals, uint cap, address indexed signatory);
+    event AuthorizeCreate(uint mainChainId, address indexed token, address indexed deployer, string name, string symbol, uint8 decimals, uint cap, address indexed signatory);
     
     function _chargeFee(uint fee) virtual internal {
         require(msg.value >= Math.min(fee, 1 ether), 'fee is too low');
