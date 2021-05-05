@@ -1284,7 +1284,7 @@ contract ERC20UpgradeSafe is Initializable, ContextUpgradeSafe, IERC20 {
  * @dev Extension of {ERC20} that adds a cap to the supply of tokens.
  */
 abstract contract ERC20CappedUpgradeSafe is Initializable, ERC20UpgradeSafe {
-    uint256 private _cap;
+    uint256 internal _cap;
 
     /**
      * @dev Sets the value of the `cap`. This value is immutable, it can only be
@@ -2715,6 +2715,11 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
     function cap() virtual override(ERC20CappedUpgradeSafe, MappingBase) public view returns (uint) {
         return ERC20CappedUpgradeSafe.cap();
     }
+    
+    //function setCap(uint cap_) external {
+    //    require(_msgSender() == Factory(factory).governor());
+    //    _cap = cap_;
+    //}
     
     function needApprove() virtual override public pure returns (bool) {
         return false;
