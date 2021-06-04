@@ -300,7 +300,7 @@ contract AdminUpgradeabilityProxy is BaseAdminUpgradeabilityProxy, Upgradeabilit
    * https://solidity.readthedocs.io/en/v0.4.24/abi-spec.html#function-selector-and-argument-encoding.
    * This parameter is optional, if no data is given the initialization call to proxied contract will be skipped.
    */
-  constructor(address _admin, address _logic, bytes memory _data) UpgradeabilityProxy(_logic, _data) public payable {
+  constructor(address _logic, address _admin, bytes memory _data) UpgradeabilityProxy(_logic, _data) public payable {
     assert(ADMIN_SLOT == bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1));
     _setAdmin(_admin);
   }
@@ -308,6 +308,173 @@ contract AdminUpgradeabilityProxy is BaseAdminUpgradeabilityProxy, Upgradeabilit
   function _willFallback() override(Proxy, BaseAdminUpgradeabilityProxy) internal {
     super._willFallback();
   }
+}
+
+
+/**
+ * @title BaseAdminUpgradeabilityProxy
+ * @dev This contract combines an upgradeability proxy with an authorization
+ * mechanism for administrative tasks.
+ * All external functions in this contract must be guarded by the
+ * `ifAdmin` modifier. See ethereum/solidity#3864 for a Solidity
+ * feature proposal that would enable this to be done automatically.
+ */
+contract __BaseAdminUpgradeabilityProxy__ is BaseUpgradeabilityProxy {
+  /**
+   * @dev Emitted when the administration has been transferred.
+   * @param previousAdmin Address of the previous admin.
+   * @param newAdmin Address of the new admin.
+   */
+  event AdminChanged(address previousAdmin, address newAdmin);
+
+  /**
+   * @dev Storage slot with the admin of the contract.
+   * This is the keccak-256 hash of "eip1967.proxy.admin" subtracted by 1, and is
+   * validated in the constructor.
+   */
+
+  bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+
+  /**
+   * @dev Modifier to check whether the `msg.sender` is the admin.
+   * If it is, it will run the function. Otherwise, it will delegate the call
+   * to the implementation.
+   */
+  //modifier ifAdmin() {
+  //  if (msg.sender == _admin()) {
+  //    _;
+  //  } else {
+  //    _fallback();
+  //  }
+  //}
+  modifier ifAdmin() {
+    require (msg.sender == _admin(), 'only admin');
+      _;
+  }
+
+  /**
+   * @return The address of the proxy admin.
+   */
+  //function admin() external ifAdmin returns (address) {
+  //  return _admin();
+  //}
+  function __admin__() external view returns (address) {
+    return _admin();
+  }
+
+  /**
+   * @return The address of the implementation.
+   */
+  //function implementation() external ifAdmin returns (address) {
+  //  return _implementation();
+  //}
+  function __implementation__() external view returns (address) {
+    return _implementation();
+  }
+
+  /**
+   * @dev Changes the admin of the proxy.
+   * Only the current admin can call this function.
+   * @param newAdmin Address to transfer proxy administration to.
+   */
+  //function changeAdmin(address newAdmin) external ifAdmin {
+  //  require(newAdmin != address(0), "Cannot change the admin of a proxy to the zero address");
+  //  emit AdminChanged(_admin(), newAdmin);
+  //  _setAdmin(newAdmin);
+  //}
+  function __changeAdmin__(address newAdmin) external ifAdmin {
+    require(newAdmin != address(0), "Cannot change the admin of a proxy to the zero address");
+    emit AdminChanged(_admin(), newAdmin);
+    _setAdmin(newAdmin);
+  }
+
+  /**
+   * @dev Upgrade the backing implementation of the proxy.
+   * Only the admin can call this function.
+   * @param newImplementation Address of the new implementation.
+   */
+  //function upgradeTo(address newImplementation) external ifAdmin {
+  //  _upgradeTo(newImplementation);
+  //}
+  function __upgradeTo__(address newImplementation) external ifAdmin {
+    _upgradeTo(newImplementation);
+  }
+
+  /**
+   * @dev Upgrade the backing implementation of the proxy and call a function
+   * on the new implementation.
+   * This is useful to initialize the proxied contract.
+   * @param newImplementation Address of the new implementation.
+   * @param data Data to send as msg.data in the low level call.
+   * It should include the signature and the parameters of the function to be called, as described in
+   * https://solidity.readthedocs.io/en/v0.4.24/abi-spec.html#function-selector-and-argument-encoding.
+   */
+  //function upgradeToAndCall(address newImplementation, bytes calldata data) payable external ifAdmin {
+  //  _upgradeTo(newImplementation);
+  //  (bool success,) = newImplementation.delegatecall(data);
+  //  require(success);
+  //}
+  function __upgradeToAndCall__(address newImplementation, bytes calldata data) payable external ifAdmin {
+    _upgradeTo(newImplementation);
+    (bool success,) = newImplementation.delegatecall(data);
+    require(success);
+  }
+
+  /**
+   * @return adm The admin slot.
+   */
+  function _admin() internal view returns (address adm) {
+    bytes32 slot = ADMIN_SLOT;
+    assembly {
+      adm := sload(slot)
+    }
+  }
+
+  /**
+   * @dev Sets the address of the proxy admin.
+   * @param newAdmin Address of the new proxy admin.
+   */
+  function _setAdmin(address newAdmin) internal {
+    bytes32 slot = ADMIN_SLOT;
+
+    assembly {
+      sstore(slot, newAdmin)
+    }
+  }
+
+  /**
+   * @dev Only fall back when the sender is not the admin.
+   */
+  //function _willFallback() virtual override internal {
+  //  require(msg.sender != _admin(), "Cannot call fallback function from the proxy admin");
+  //  //super._willFallback();
+  //}
+}
+
+
+/**
+ * @title AdminUpgradeabilityProxy
+ * @dev Extends from BaseAdminUpgradeabilityProxy with a constructor for 
+ * initializing the implementation, admin, and init data.
+ */
+contract __AdminUpgradeabilityProxy__ is __BaseAdminUpgradeabilityProxy__, UpgradeabilityProxy {
+  /**
+   * Contract constructor.
+   * @param _logic address of the initial implementation.
+   * @param _admin Address of the proxy administrator.
+   * @param _data Data to send as msg.data to the implementation to initialize the proxied contract.
+   * It should include the signature and the parameters of the function to be called, as described in
+   * https://solidity.readthedocs.io/en/v0.4.24/abi-spec.html#function-selector-and-argument-encoding.
+   * This parameter is optional, if no data is given the initialization call to proxied contract will be skipped.
+   */
+  constructor(address _logic, address _admin, bytes memory _data) UpgradeabilityProxy(_logic, _data) public payable {
+    assert(ADMIN_SLOT == bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1));
+    _setAdmin(_admin);
+  }
+  
+  //function _willFallback() override(Proxy, BaseAdminUpgradeabilityProxy) internal {
+  //  super._willFallback();
+  //}
 }
 
 
@@ -352,7 +519,7 @@ contract InitializableAdminUpgradeabilityProxy is BaseAdminUpgradeabilityProxy, 
    * https://solidity.readthedocs.io/en/v0.4.24/abi-spec.html#function-selector-and-argument-encoding.
    * This parameter is optional, if no data is given the initialization call to proxied contract will be skipped.
    */
-  function initialize(address _admin, address _logic, bytes memory _data) public payable {
+  function initialize(address _logic, address _admin, bytes memory _data) public payable {
     require(_implementation() == address(0));
     InitializableUpgradeabilityProxy.initialize(_logic, _data);
     assert(ADMIN_SLOT == bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1));
@@ -2024,6 +2191,9 @@ library RLPEncode {
 
 
 contract Governable is Initializable {
+    // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
+    bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+
     address public governor;
 
     event GovernorshipTransferred(address indexed previousGovernor, address indexed newGovernor);
@@ -2037,8 +2207,15 @@ contract Governable is Initializable {
         emit GovernorshipTransferred(address(0), governor);
     }
 
+    function _admin() internal view returns (address adm) {
+        bytes32 slot = ADMIN_SLOT;
+        assembly {
+            adm := sload(slot)
+        }
+    }
+    
     modifier governance() {
-        require(msg.sender == governor);
+        require(msg.sender == governor || msg.sender == _admin());
         _;
     }
 
@@ -2314,6 +2491,7 @@ interface IPermit {
 
 contract Constants {
     bytes32 internal constant _TokenMapped_     = 'TokenMapped';
+    bytes32 internal constant _MainTokenMapped_ = 'MainTokenMapped';
     bytes32 internal constant _MappableToken_   = 'MappableToken';
     bytes32 internal constant _MappingToken_    = 'MappingToken';
     bytes32 internal constant _fee_             = 'fee';
@@ -2325,8 +2503,24 @@ contract Constants {
     bytes32 internal constant _initQuotaRatio_  = 'initQuotaRatio';
     bytes32 internal constant _autoQuotaRatio_  = 'autoQuotaRatio';
     bytes32 internal constant _autoQuotaPeriod_ = 'autoQuotaPeriod';
-    //bytes32 internal constant _uniswapRounter_  = 'uniswapRounter';
     
+    bytes32 internal constant _WETH_            = 'WETH';
+    bytes32 internal constant _swapFactory_     = 'swapFactory';
+    bytes32 internal constant _pathTVL_         = 'pathTVL';
+    bytes32 internal constant _pathAPY_         = 'pathAPY';
+    
+    bytes32 internal constant _feeRate_         = 'feeRate';
+    bytes32 internal constant _ecoAddr_         = 'ecoAddr';
+    bytes32 internal constant _ecoRatio_        = 'ecoRatio';
+	bytes32 internal constant _allowContract_   = 'allowContract';
+	bytes32 internal constant _allowlist_       = 'allowlist';
+	bytes32 internal constant _blocklist_       = 'blocklist';
+	bytes32 internal constant _rewardsDuration_ = 'rewardsDuration';
+	
+	address internal constant _addrFactory_     = 0xBF515ff38D55737C56D62E8B6a8eea322Ec38Aa5;
+	address internal constant _addrTOKEN_       = 0x3B73c1B2ea59835cbfcADade5462b6aB630D9890;
+	address internal constant _addrMine_        = 0x6CE461AFD47AA01A0D1Cf3Fc0DbB8206bBc40bEc;
+
     function _chainId() internal pure returns (uint id) {
         assembly { id := chainid() }
     }
@@ -2347,6 +2541,12 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     bytes32 internal _DOMAIN_SEPARATOR;
     function DOMAIN_SEPARATOR() virtual public view returns (bytes32) {  return _DOMAIN_SEPARATOR;  }
 
+    bytes32 internal constant NAME_SLOT    = 0x4cd9b827ca535ceb0880425d70eff88561ecdf04dc32fcf7ff3b15c587f8a870;      // bytes32(uint256(keccak256('eip1967.proxy.name')) - 1)
+    function productName() virtual external view returns (bytes32 name_) {
+        bytes32 slot = NAME_SLOT;
+        assembly {  name_ := sload(slot)  }
+    }
+    
     address public factory;
     uint256 public mainChainId;
     address public token;
@@ -2366,7 +2566,7 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     }
     
     modifier onlyFactory {
-        require(msg.sender == factory, 'Only called by Factory');
+        require(msg.sender == factory/*, 'Only called by Factory'*/);
         _;
     }
     
@@ -2436,16 +2636,16 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     
     function sendFrom(address from, uint toChainId, address to, uint volume) virtual public payable returns (uint nonce) {
         _chargeFee();
-        _sendFrom(from, volume);
+        volume = _sendFrom(from, volume);
         nonce = sentCount[toChainId][to]++;
         sent[toChainId][to][nonce] = volume;
         emit Send(from, toChainId, to, nonce, volume);
     }
     event Send(address indexed from, uint indexed toChainId, address indexed to, uint nonce, uint volume);
     
-    function _sendFrom(address from, uint volume) virtual internal;
+    function _sendFrom(address from, uint volume) virtual internal returns (uint);
 
-    function receive(uint256 fromChainId, address to, uint256 nonce, uint256 volume, Signature[] memory signatures) virtual external payable {
+    function receive(uint256 fromChainId, address payable to, uint256 nonce, uint256 volume, Signature[] memory signatures) virtual external payable {
         _chargeFee();
         require(received[fromChainId][to][nonce] == 0, 'withdrawn already');
         uint N = signatures.length;
@@ -2468,15 +2668,20 @@ abstract contract MappingBase is ContextUpgradeSafe, Constants {
     event Receive(uint256 indexed fromChainId, address indexed to, uint256 indexed nonce, uint256 volume);
     event Authorize(uint256 fromChainId, address indexed to, uint256 indexed nonce, uint256 volume, address indexed signatory);
     
-    function _receive(address to, uint256 volume) virtual internal;
+    function _receive(address payable to, uint256 volume) virtual internal;
+    
+    //function fee() virtual public view returns (uint) {
+    //    return Math.min(Factory(factory).getConfig(_fee_), 0.1 ether);
+    //}
     
     function _chargeFee() virtual internal {
-        require(msg.value >= Math.min(Factory(factory).getConfig(_fee_), 0.1 ether), 'fee is too low');
+        uint fee_ = Math.min(Factory(factory).getConfig(_fee_), 0.1 ether);
+        require(msg.value >= fee_, 'fee is too low');
         address payable feeTo = address(Factory(factory).getConfig(_feeTo_));
         if(feeTo == address(0))
             feeTo = address(uint160(factory));
-        feeTo.transfer(msg.value);
-        emit ChargeFee(_msgSender(), feeTo, msg.value);
+        feeTo.transfer(fee_);
+        emit ChargeFee(_msgSender(), feeTo, fee_);
     }
     event ChargeFee(address indexed from, address indexed to, uint value);
 
@@ -2500,6 +2705,18 @@ contract TokenMapped is MappingBase {
         _DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(ERC20UpgradeSafe(token).name())), _chainId(), address(this)));
 	}
 	
+    function name() public view returns (string memory) {
+        return ERC20UpgradeSafe(token).name();
+    }
+
+    function symbol() public view returns (string memory) {
+        return ERC20UpgradeSafe(token).symbol();
+    }
+
+    function decimals() public view returns (uint8) {
+        return ERC20UpgradeSafe(token).decimals();
+    }
+
     function cap() virtual override public view returns (uint) {
         return IERC20(token).totalSupply();
     }
@@ -2512,52 +2729,130 @@ contract TokenMapped is MappingBase {
         return true;
     }
     
-    function _sendFrom(address from, uint volume) virtual override internal {
+    function _sendFrom(address from, uint volume) virtual override internal returns (uint vol) {
+        vol = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(from, address(this), volume);
+        vol = IERC20(token).balanceOf(address(this)).sub(vol);
     }
 
-    function _receive(address to, uint256 volume) virtual override internal {
+    function _receive(address payable to, uint256 volume) virtual override internal {
         IERC20(token).safeTransfer(to, volume);
     }
 
     uint256[50] private __gap;
 }
-/*
-contract TokenMapped2 is TokenMapped, StakingRewards, ConfigurableBase {
-    modifier governance {
-        require(_msgSender() == MappingTokenFactory(factory).governor());
-        _;
+
+contract MainTokenMapped is TokenMapped, StakingRewards {
+    using Address for address payable;
+    
+	address internal WETH;
+	uint public lep;            // 1: linear, 2: exponential, 3: power
+	uint public begin;
+    mapping (address => uint256) public paid;
+
+    function __MainTokenMapped_init(address factory_, address token_, address WETH_, address rewardsToken_, address mine_) external initializer {
+        __Context_init_unchained();
+		__TokenMapped_init_unchained(factory_, token_);
+        __ReentrancyGuard_init_unchained();
+        __StakingRewards_init_unchained(mine_, rewardsToken_, token_);
+		__MainTokenMapped_init_unchained(WETH_);
+	}
+	
+	function __MainTokenMapped_init_unchained(address WETH_) public initializer {
+        WETH = WETH_;
+        lep = 2;             // 1: linear, 2: exponential, 3: power
+        begin = now;
+	}
+	
+    //function _chargeFee() virtual override internal {
+    //}
+
+    function withdrawSend(uint256 amount, uint toChainId, address to) virtual public payable nonReentrant updateReward(msg.sender) returns (uint nonce) {
+        require(amount > 0, "Cannot withdraw 0");
+        _totalSupply = _totalSupply.sub(amount);
+        _balances[msg.sender] = _balances[msg.sender].sub(amount);
+        //stakingToken.safeTransfer(msg.sender, amount);
+        emit Withdrawn(msg.sender, amount);
+
+        uint volume = amount;
+        address from = _msgSender();
+        _chargeFee();
+        //volume = _sendFrom(from, volume);
+        nonce = sentCount[toChainId][to]++;
+        sent[toChainId][to][nonce] = volume;
+        emit Send(from, toChainId, to, nonce, volume);
     }
     
-    function setConfig(bytes32 key, uint value) external governance {
-        _setConfig(key, value);
+    function _sendFrom(address from, uint volume) virtual override internal returns (uint vol) {
+        if(token == WETH && address(this).balance >= volume) {
+            vol = volume;
+            IWETH(token).deposit{value: vol}();
+        } else
+            return super._sendFrom(from, volume);
     }
-    function setConfigI(bytes32 key, uint index, uint value) external governance {
-        _setConfig(bytes32(uint(key) ^ index), value);
-    }
-    function setConfigA(bytes32 key, address addr, uint value) public governance {
-        _setConfig(bytes32(uint(key) ^ uint(addr)), value);
+    
+    function _receive(address payable to, uint256 volume) virtual override internal {
+        uint feeRate = Math.min(Factory(factory).getConfig(_feeRate_), 0.01 ether);
+        address payable feeTo = address(Factory(factory).getConfig(_feeTo_));
+        if(feeTo == address(0))
+            feeTo = address(uint160(factory));
+        uint fee = volume.mul(feeRate).div(1 ether);
+        IERC20(token).safeTransfer(to, fee);
+        if(token == WETH) {
+            IWETH(token).withdraw(volume);
+            to.transfer(volume);
+        } else
+            IERC20(token).safeTransfer(to, volume.sub(fee));
+        //uint v = _swapValue(fee);
+        //rewardPerTokenStored = rewardPerTokenStored.add(v.mul(1e18).div(_totalSupply));
     }
 
+    //function _swapValue(uint vol, address[] memory path) virtual internal view returns (uint v) {
+    //    v = vol;
+    //    for(uint i=0; i<path.length-1; i++) {
+    //        (uint reserve0, uint reserve1,) = IUniswapV2Pair(IUniswapV2Factory(swapFactory).getPair(path[i], path[i+1])).getReserves();
+    //        v =  path[i+1] < path[i] ? v.mul(reserve0) / reserve1 : v.mul(reserve1) / reserve0;
+    //    }
+    //}
+    
+    //modifier governance {
+    //    require(_msgSender() == Factory(factory).governor());
+    //    _;
+    //}
+    
+    //function notifyRewardBegin(uint _lep, /*uint _period,*/ uint _span, uint _begin) virtual public governance updateReward(address(0)) {
+    //    lep             = _lep;         // 1: linear, 2: exponential, 3: power
+    //    //period          = _period;
+    //    rewardsDuration = _span;
+    //    begin           = _begin;
+    //    periodFinish    = _begin.add(_span);
+    //}
+    
     function rewardDelta() public view returns (uint amt) {
         if(begin == 0 || begin >= now || lastUpdateTime >= now)
             return 0;
             
-        amt = rewardsToken.allowance(rewardsDistribution, address(this)).sub0(rewards[address(0)]);
+        uint rewardsDuration_ = Factory(factory).getConfig(_rewardsDuration_);
+        
+        amt = Math.min(rewardsToken.allowance(rewardsDistribution, address(this)), rewardsToken.balanceOf(rewardsDistribution)).sub0(rewards[address(0)]);
         
         // calc rewardDelta in period
-        if(lep == 3) {                                                              // power
-            uint y = period.mul(1 ether).div(lastUpdateTime.add(rewardsDuration).sub(begin));
-            uint amt1 = amt.mul(1 ether).div(y);
-            uint amt2 = amt1.mul(period).div(now.add(rewardsDuration).sub(begin));
-            amt = amt.sub(amt2);
-        } else if(lep == 2) {                                                       // exponential
-            if(now.sub(lastUpdateTime) < rewardsDuration)
-                amt = amt.mul(now.sub(lastUpdateTime)).div(rewardsDuration);
-        }else if(now < periodFinish)                                                // linear
-            amt = amt.mul(now.sub(lastUpdateTime)).div(periodFinish.sub(lastUpdateTime));
-        else if(lastUpdateTime >= periodFinish)
-            amt = 0;
+        //if(lep == 3) {                                                              // power
+        //    //uint y = period.mul(1 ether).div(lastUpdateTime.add(rewardsDuration_).sub(begin));
+        //    //uint amt1 = amt.mul(1 ether).div(y);
+        //    //uint amt2 = amt1.mul(period).div(now.add(rewardsDuration_).sub(begin));
+        //    uint amt2 = amt.mul(lastUpdateTime.add(rewardsDuration_).sub(begin)).div(now.add(rewardsDuration_).sub(begin));
+        //    amt = amt.sub(amt2);
+        //} else if(lep == 2) {                                                       // exponential
+            if(now.sub(lastUpdateTime) < rewardsDuration_)
+                amt = amt.mul(now.sub(lastUpdateTime)).div(rewardsDuration_);
+        //}else if(now < periodFinish)                                                // linear
+        //    amt = amt.mul(now.sub(lastUpdateTime)).div(periodFinish.sub(lastUpdateTime));
+        //else if(lastUpdateTime >= periodFinish)
+        //    amt = 0;
+            
+        if(Factory(factory).getConfig(_ecoAddr_) != 0)
+            amt = amt.mul(uint(1e18).sub(Factory(factory).getConfig(_ecoRatio_))).div(1 ether);
     }
     
     function rewardPerToken() virtual override public view returns (uint256) {
@@ -2570,38 +2865,41 @@ contract TokenMapped2 is TokenMapped, StakingRewards, ConfigurableBase {
             );
     }
 
-    modifier updateReward(address account) virtual override {
-        (uint delta, uint d) = (rewardDelta(), 0);
+    function earned(address account) virtual override public view returns (uint256) {
+        return Math.min(Math.min(super.earned(account), rewardsToken.allowance(rewardsDistribution, address(this))), rewardsToken.balanceOf(rewardsDistribution));
+	}    
+	
+    modifier updateReward(address account) override {
         rewardPerTokenStored = rewardPerToken();
+        uint delta = rewardDelta();
+        {
+            address addr = address(Factory(factory).getConfig(_ecoAddr_));
+            uint ratio = Factory(factory).getConfig(_ecoRatio_);
+            if(addr != address(0) && ratio != 0) {
+                uint d = delta.mul(ratio).div(uint(1e18).sub(ratio));
+                rewards[addr] = rewards[addr].add(d);
+                delta = delta.add(d);
+            }
+        }
+        rewards[address(0)] = rewards[address(0)].add(delta);
         lastUpdateTime = now;
         if (account != address(0)) {
             rewards[account] = earned(account);
             userRewardPerTokenPaid[account] = rewardPerTokenStored;
         }
-
-        address addr = address(config[_ecoAddr_]);
-        uint ratio = config[_ecoRatio_];
-        if(addr != address(0) && ratio != 0) {
-            d = delta.mul(ratio).div(1 ether);
-            rewards[addr] = rewards[addr].add(d);
-        }
-        rewards[address(0)] = rewards[address(0)].add(delta).add(d);
         _;
     }
 
     function getReward() virtual override public {
-        getReward(msg.sender);
+        getRewardA(msg.sender);
     }
-    function getReward(address payable acct) virtual public nonReentrant updateReward(acct) {
-        require(acct != address(0), 'invalid address');
-        require(getConfig(_blocklist_, acct) == 0, 'In blocklist');
+    function getRewardA(address payable acct) virtual public nonReentrant updateReward(acct) {
+        require(Factory(factory).getConfigA(_blocklist_, acct) == 0, 'In blocklist');
         bool isContract = acct.isContract();
-        require(!isContract || config[_allowContract_] != 0 || getConfig(_allowlist_, acct) != 0, 'No allowContract');
+        require(!isContract || Factory(factory).getConfig(_allowContract_) != 0 || Factory(factory).getConfigA(_allowlist_, acct) != 0, 'No allowContract');
 
         uint256 reward = rewards[acct];
         if (reward > 0) {
-            paid[acct] = paid[acct].add(reward);
-            paid[address(0)] = paid[address(0)].add(reward);
             rewards[acct] = 0;
             rewards[address(0)] = rewards[address(0)].sub0(reward);
             rewardsToken.safeTransferFrom(rewardsDistribution, acct, reward);
@@ -2609,12 +2907,127 @@ contract TokenMapped2 is TokenMapped, StakingRewards, ConfigurableBase {
         }
     }
 
-    function getRewardForDuration() override external view returns (uint256) {
-        return rewardsToken.allowance(rewardsDistribution, address(this)).sub0(rewards[address(0)]);
+    //function getRewardForDuration() override external view returns (uint256) {
+    //    return rewardsToken.allowance(rewardsDistribution, address(this)).sub0(rewards[address(0)]);
+    //}
+    
+    //function setPath(address swapFactory_, address[] memory pathTVL_, address[] memory pathAPY_) virtual external governance {
+    //    uint m = pathTVL_.length;
+    //    uint n = pathAPY_.length;
+    //    require(m > 0 && n > 0 && pathTVL_[m-1] == pathAPY_[n-1]);
+    //    for(uint i=0; i<m-1; i++)
+    //        require(address(0) != IUniswapV2Factory(swapFactory_).getPair(pathTVL_[i], pathTVL_[i+1]));
+    //    for(uint i=0; i<n-1; i++)
+    //        require(address(0) != IUniswapV2Factory(swapFactory_).getPair(pathAPY_[i], pathAPY_[i+1]));
+    //        
+    //    swapFactory = swapFactory_;
+    //    pathTVL = pathTVL_;
+    //    pathAPY = pathAPY_;
+    //}
+    //
+    //function lptValueTotal() virtual public view returns (uint) {
+    //    require(pathTVL.length > 0 && pathTVL[0] != address(stakingToken));
+    //    return IERC20(pathTVL[0]).balanceOf(address(stakingToken)).mul(2);
+    //}
+    //
+    //function lptValue(uint vol) virtual public view returns (uint) {
+    //    return lptValueTotal().mul(vol).div(IERC20(stakingToken).totalSupply());
+    //}
+    //
+    //function swapValue(uint vol, address[] memory path) virtual public view returns (uint v) {
+    //    v = vol;
+    //    for(uint i=0; i<path.length-1; i++) {
+    //        (uint reserve0, uint reserve1,) = IUniswapV2Pair(IUniswapV2Factory(swapFactory).getPair(path[i], path[i+1])).getReserves();
+    //        v =  path[i+1] < path[i] ? v.mul(reserve0) / reserve1 : v.mul(reserve1) / reserve0;
+    //    }
+    //}
+    function swapValue(uint vol, address tokenA, bytes32 pathName) virtual public view returns (uint v) {
+        v = vol;
+        IUniswapV2Factory swapFactory = IUniswapV2Factory(address(Factory(factory).getConfig(_swapFactory_)));
+        uint N = Factory(factory).getConfig(pathName);
+        for(uint i=1; i<N; i++) {
+            address tokenB = address(Factory(factory).getConfigI(pathName, i));
+            if(tokenA != tokenB) {
+                (uint reserve0, uint reserve1,) = IUniswapV2Pair(swapFactory.getPair(tokenA, tokenB)).getReserves();
+                v =  tokenB < tokenA ? v.mul(reserve0) / reserve1 : v.mul(reserve1) / reserve0;
+            }
+            tokenB = tokenA;
+        }
     }
     
+    function TVL() virtual public view returns (uint tvl) {
+        //if(pathTVL[0] != address(stakingToken))
+        //    tvl = lptValueTotal();
+        //else
+            tvl = totalSupply();
+        tvl = swapValue(tvl, address(stakingToken), _pathTVL_);
+    }
+    
+    function APY() virtual public view returns (uint) {
+        uint rewardsDuration_ = Factory(factory).getConfig(_rewardsDuration_);
+        
+        uint amt = rewardsToken.allowance(rewardsDistribution, address(this)).sub0(rewards[address(0)]);
+        
+        //if(lep == 3) {                                                              // power
+        //    uint amt2 = amt.mul(365 days).mul(now.add(rewardsDuration_).sub(begin)).div(now.add(1).add(rewardsDuration_).sub(begin));
+        //    amt = amt.sub(amt2);
+        //} else if(lep == 2) {                                                       // exponential
+            amt = amt.mul(365 days).div(rewardsDuration_);
+        //}else if(now < periodFinish)                                                // linear
+        //    amt = amt.mul(365 days).div(periodFinish.sub(lastUpdateTime));
+        //else if(lastUpdateTime >= periodFinish)
+        //    amt = 0;
+        
+        //require(address(rewardsToken) == pathAPY[0]);
+        amt = swapValue(amt, address(rewardsToken), _pathAPY_);
+        return amt.mul(1e18).div(TVL());
+    }
+
+    function stakeEth() virtual public payable nonReentrant updateReward(msg.sender) {
+        require(address(stakingToken) == WETH, 'stakingToken is not WETH');
+        uint amount = msg.value;
+        require(amount > 0, "Cannot stake 0");
+        _totalSupply = _totalSupply.add(amount);
+        _balances[msg.sender] = _balances[msg.sender].add(amount);
+        IWETH(address(stakingToken)).deposit{value: amount}();                   //stakingToken.safeTransferFrom(msg.sender, address(this), amount);
+        emit Staked(msg.sender, amount);
+    }
+
+    function withdrawEth(uint256 amount) virtual public nonReentrant updateReward(msg.sender) {
+        require(address(stakingToken) == WETH, 'stakingToken is not WETH');
+        require(amount > 0, "Cannot withdraw 0");
+        _totalSupply = _totalSupply.sub(amount);
+        _balances[msg.sender] = _balances[msg.sender].sub(amount);
+        IWETH(address(stakingToken)).withdraw(amount);                           //stakingToken.safeTransfer(msg.sender, amount);
+        msg.sender.transfer(amount);
+        emit Withdrawn(msg.sender, amount);
+    }
+
+    function exitEth() virtual public {
+        withdrawEth(_balances[msg.sender]);
+        getReward();
+    }
+    
+    receive () payable external {
+        stakeEth();
+    }
+    
+    uint256[50] private __gap;
 }
-*/
+
+interface IWETH is IERC20 {
+    function deposit() external payable;
+    function withdraw(uint) external;
+}
+
+interface IUniswapV2Factory {
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
+}
+
+interface IUniswapV2Pair {
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+}
+
 
 abstract contract Permit {
     // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
@@ -2679,11 +3092,12 @@ contract MappableToken is Permit, ERC20UpgradeSafe, MappingBase {
         return ERC20UpgradeSafe._approve(owner, spender, amount);
     }
     
-    function _sendFrom(address from, uint volume) virtual override internal {
+    function _sendFrom(address from, uint volume) virtual override internal returns (uint) {
         transferFrom(from, address(this), volume);
+        return volume;
     }
 
-    function _receive(address to, uint256 volume) virtual override internal {
+    function _receive(address payable to, uint256 volume) virtual override internal {
         _transfer(address(this), to, volume);
     }
 
@@ -2716,10 +3130,10 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
         return ERC20CappedUpgradeSafe.cap();
     }
     
-    //function setCap(uint cap_) external {
-    //    require(_msgSender() == Factory(factory).governor());
-    //    _cap = cap_;
-    //}
+    function setCap(uint cap_) external {
+        require(_msgSender() == Factory(factory).governor());
+        _cap = cap_;
+    }
     
     function needApprove() virtual override public pure returns (bool) {
         return false;
@@ -2729,13 +3143,14 @@ contract MappingToken is Permit, ERC20CappedUpgradeSafe, MappingBase {
         return ERC20UpgradeSafe._approve(owner, spender, amount);
     }
     
-    function _sendFrom(address from, uint volume) virtual override internal {
+    function _sendFrom(address from, uint volume) virtual override internal returns (uint) {
         _burn(from, volume);
         if(from != _msgSender() && allowance(from, _msgSender()) != uint(-1))
             _approve(from, _msgSender(), allowance(from, _msgSender()).sub(volume, "ERC20: transfer volume exceeds allowance"));
+        return volume;
     }
 
-    function _receive(address to, uint256 volume) virtual override internal {
+    function _receive(address payable to, uint256 volume) virtual override internal {
         _mint(to, volume);
     }
 
@@ -2780,33 +3195,39 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     string[] public certifiedSymbols;
     address[] public signatories;
 
-    function __MappingTokenFactory_init(address _governor, address _implTokenMapped, address _implMappableToken, address _implMappingToken, address _feeTo) external initializer {
+    function __MappingTokenFactory_init(address _governor, address _implTokenMapped, address _implMainTokenMapped, address _implMappableToken, address _implMappingToken, address _WETH, address _feeTo) external initializer {
         __Governable_init_unchained(_governor);
-        __MappingTokenFactory_init_unchained(_implTokenMapped, _implMappableToken, _implMappingToken, _feeTo);
+        __MappingTokenFactory_init_unchained(_implTokenMapped, _implMainTokenMapped, _implMappableToken, _implMappingToken, _WETH, _feeTo);
     }
     
-    function __MappingTokenFactory_init_unchained(address _implTokenMapped, address _implMappableToken, address _implMappingToken, address _feeTo) public governance {
+    function __MappingTokenFactory_init_unchained(address _implTokenMapped, address _implMainTokenMapped, address _implMappableToken, address _implMappingToken, address _WETH, address _feeTo) public governance {
+        config[_WETH_]                          = uint(_WETH);
+        config[_feeTo_]                         = uint(_feeTo);
         config[_fee_]                           = 0.005 ether;
         config[_feeCreate_]                     = 0.100 ether;
         config[_feeRegister_]                   = 0.200 ether;
-        config[_feeTo_]                         = uint(_feeTo);
         config[_onlyDeployer_]                  = 1;
         config[_minSignatures_]                 = 3;
-        config[_initQuotaRatio_]                = 0.100 ether;  // 10%
-        config[_autoQuotaRatio_]                = 0.010 ether;  //  1%
+        config[_initQuotaRatio_]                = 0.10 ether;   // 10%
+        config[_autoQuotaRatio_]                = 0.01 ether;   //  1%
         config[_autoQuotaPeriod_]               = 1 days;
         //config[_uniswapRounter_]                = uint(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
+        config[_feeRate_]                       = 0.0008 ether; // 0.08% feeRate for MainToken
+        config[_ecoRatio_]                      = 0.1 ether;    // 10% mining for eco
+        config[_ecoAddr_]                       = uint(0x03160470860A552301d3C152E88b4076f90b2241);
+        config[_rewardsDuration_]               = 1000 days;
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes('MappingTokenFactory')), _chainId(), address(this)));
-        upgradeProductImplementationsTo_(_implTokenMapped, _implMappableToken, _implMappingToken);
+        upgradeProductImplementationsTo_(_implTokenMapped, _implMainTokenMapped, _implMappableToken, _implMappingToken);
         emit ProductProxyCodeHash(keccak256(type(InitializableProductProxy).creationCode));
     }
     event ProductProxyCodeHash(bytes32 codeHash);
 
-    function upgradeProductImplementationsTo_(address _implTokenMapped, address _implMappableToken, address _implMappingToken) public governance {
-        productImplementations[_TokenMapped_]   = _implTokenMapped;
-        productImplementations[_MappableToken_] = _implMappableToken;
-        productImplementations[_MappingToken_]  = _implMappingToken;
+    function upgradeProductImplementationsTo_(address _implTokenMapped, address _implMainTokenMapped, address _implMappableToken, address _implMappingToken) public governance {
+        productImplementations[_TokenMapped_]       = _implTokenMapped;
+        productImplementations[_MainTokenMapped_]   = _implMainTokenMapped;
+        productImplementations[_MappableToken_]     = _implMappableToken;
+        productImplementations[_MappingToken_]      = _implMappingToken;
     }
     
     function setSignatories(address[] calldata signatories_) virtual external governance {
@@ -2961,16 +3382,23 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         supportChainIds.push(chainId_);
     }
     
-    function _registerMapping(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual internal {
+    function registerMainTokenMapped_(uint[] memory mainChainIds, address[] memory tokens, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual external onlyAuthorty {
+        require(mainChainIds.length == tokens.length, 'two array lenth not equal');
+        for(uint i=0; i<mainChainIds.length; i++) 
+            _registerMapping(mainChainIds[i], tokens[i], chainIds, mappingTokenMappeds_, true);
+    }
+    
+    function _registerMapping(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_, bool isMainToken) virtual internal {
         require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
         require(chainIds.length == mappingTokenMappeds_.length, 'two array lenth not equal');
         require(isSupportChainId(mainChainId), 'Not support mainChainId');
         for(uint i=0; i<chainIds.length; i++) {
             require(isSupportChainId(chainIds[i]), 'Not support chainId');
-            require(token == mappingTokenMappeds_[i] || mappingTokenMappeds_[i] == calcMapping(mainChainId, token) || _msgSender() == governor, 'invalid mappingTokenMapped address');
+            require(token == mappingTokenMappeds_[i] || mappingTokenMappeds_[i] == calcMapping(mainChainId, token) || authorties[_msgSender()], 'invalid mappingTokenMapped address');
             //require(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0 || _mainChainIdTokens[mappingTokenMappeds_[i]] == (mainChainId << 160) | uint(token), 'mainChainIdTokens exist already');
             //require(mappingTokenMappeds[token][chainIds[i]] == address(0), 'mappingTokenMappeds exist already');
             //if(_mainChainIdTokens[mappingTokenMappeds_[i]] == 0)
+            if(!isMainToken || mainChainId == chainIds[i])
                 _mainChainIdTokens[mappingTokenMappeds_[i]] = (mainChainId << 160) | uint(token);
             mappingTokenMappeds[token][chainIds[i]] = mappingTokenMappeds_[i];
             emit RegisterMapping(mainChainId, token, chainIds[i], mappingTokenMappeds_[i]);
@@ -2978,8 +3406,8 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event RegisterMapping(uint mainChainId, address token, uint chainId, address mappingTokenMapped);
     
-    function registerMapping_(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual external governance {
-        _registerMapping(mainChainId, token, chainIds, mappingTokenMappeds_);
+    function registerMapping_(uint mainChainId, address token, uint[] memory chainIds, address[] memory mappingTokenMappeds_) virtual external onlyAuthorty {
+        _registerMapping(mainChainId, token, chainIds, mappingTokenMappeds_, false);
     }
     
     function registerMapping(uint mainChainId, address token, uint nonce, uint[] memory chainIds, address[] memory mappingTokenMappeds_, Signature[] memory signatures) virtual external payable {
@@ -2998,40 +3426,40 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
             _decreaseAuthCount(signatures[i].signatory, 1);
             emit AuthorizeRegister(mainChainId, token, signatory);
         }
-        _registerMapping(mainChainId, token, chainIds, mappingTokenMappeds_);
+        _registerMapping(mainChainId, token, chainIds, mappingTokenMappeds_, false);
     }
     event AuthorizeRegister(uint indexed mainChainId, address indexed token, address indexed signatory);
 
-    function certifiedCount() external view returns (uint) {
-        return certifiedSymbols.length;
-    }
-    
-    function certifiedTokens(string memory symbol) public view returns (uint mainChainId, address token) {
-        uint256 chainIdToken = _certifiedTokens[symbol];
-        mainChainId = chainIdToken >> 160;
-        token = address(chainIdToken);
-    }
-    
-    function allCertifiedTokens() external view returns (string[] memory symbols, uint[] memory chainIds, address[] memory tokens) {
-        symbols = certifiedSymbols;
-        uint N = certifiedSymbols.length;
-        chainIds = new uint[](N);
-        tokens = new address[](N);
-        for(uint i=0; i<N; i++)
-            (chainIds[i], tokens[i]) = certifiedTokens(certifiedSymbols[i]);
-    }
-
-    function registerCertified_(string memory symbol, uint mainChainId, address token) external governance {
-        require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
-        require(isSupportChainId(mainChainId), 'Not support mainChainId');
-        require(_certifiedTokens[symbol] == 0, 'Certified added already');
-        if(mainChainId == _chainId())
-            require(keccak256(bytes(symbol)) == keccak256(bytes(ERC20UpgradeSafe(token).symbol())), 'symbol different');
-        _certifiedTokens[symbol] = (mainChainId << 160) | uint(token);
-        certifiedSymbols.push(symbol);
-        emit RegisterCertified(symbol, mainChainId, token);
-    }
-    event RegisterCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
+    //function certifiedCount() external view returns (uint) {
+    //    return certifiedSymbols.length;
+    //}
+    //
+    //function certifiedTokens(string memory symbol) public view returns (uint mainChainId, address token) {
+    //    uint256 chainIdToken = _certifiedTokens[symbol];
+    //    mainChainId = chainIdToken >> 160;
+    //    token = address(chainIdToken);
+    //}
+    //
+    //function allCertifiedTokens() external view returns (string[] memory symbols, uint[] memory chainIds, address[] memory tokens) {
+    //    symbols = certifiedSymbols;
+    //    uint N = certifiedSymbols.length;
+    //    chainIds = new uint[](N);
+    //    tokens = new address[](N);
+    //    for(uint i=0; i<N; i++)
+    //        (chainIds[i], tokens[i]) = certifiedTokens(certifiedSymbols[i]);
+    //}
+    //
+    //function registerCertified_(string memory symbol, uint mainChainId, address token) external governance {
+    //    require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
+    //    require(isSupportChainId(mainChainId), 'Not support mainChainId');
+    //    require(_certifiedTokens[symbol] == 0, 'Certified added already');
+    //    if(mainChainId == _chainId())
+    //        require(keccak256(bytes(symbol)) == keccak256(bytes(ERC20UpgradeSafe(token).symbol())), 'symbol different');
+    //    _certifiedTokens[symbol] = (mainChainId << 160) | uint(token);
+    //    certifiedSymbols.push(symbol);
+    //    emit RegisterCertified(symbol, mainChainId, token);
+    //}
+    //event RegisterCertified(string indexed symbol, uint indexed mainChainId, address indexed token);
     
     //function updateCertified_(string memory symbol, uint mainChainId, address token) external governance {
     //    require(_chainId() == 1 || _chainId() == 3, 'called only on ethereum mainnet');
@@ -3062,8 +3490,8 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
             ))));
     }
 
-    function createTokenMapped(address token, uint nonce) external payable returns (address tokenMapped) {
-        if(_msgSender() != governor) {
+    function createTokenMapped(address token, uint nonce) public payable returns (address tokenMapped) {
+        if(!authorties[_msgSender()]) {
             _chargeFee(config[_feeCreate_]);
             require(config[_onlyDeployer_] == 0 || token == calcContract(_msgSender(), nonce), 'only deployer');
         }
@@ -3075,7 +3503,10 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
         assembly {
             tokenMapped := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
-        InitializableProductProxy(payable(tokenMapped)).__InitializableProductProxy_init(address(this), _TokenMapped_, abi.encodeWithSignature('__TokenMapped_init(address,address)', address(this), token));
+        if(nonce != uint(-1))
+            InitializableProductProxy(payable(tokenMapped)).__InitializableProductProxy_init(address(this), _TokenMapped_, abi.encodeWithSignature('__TokenMapped_init(address,address)', address(this), token));
+        else
+            InitializableProductProxy(payable(tokenMapped)).__InitializableProductProxy_init(address(this), _MainTokenMapped_, abi.encodeWithSignature('__MainTokenMapped_init(address,address,address,address,address)', address(this), token, address(config[_WETH_]), _addrTOKEN_, _addrMine_));
         
         tokenMappeds[token] = tokenMapped;
         _initAuthQuotas(tokenMapped, IERC20(token).totalSupply());
@@ -3083,8 +3514,12 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event CreateTokenMapped(address indexed deployer, address indexed token, address indexed tokenMapped);
     
+    function createMainTokenMapped_(address token) external payable returns (address mainTokenMapped) {
+        return createTokenMapped(token, uint(-1));
+    }
+    
     function createMappableToken(string memory name, string memory symbol, uint8 decimals, uint totalSupply) external payable returns (address mappableToken) {
-        if(_msgSender() != governor)
+        if(!authorties[_msgSender()])
             _chargeFee(config[_feeCreate_]);
         require(mappableTokens[_msgSender()] == address(0), 'MappableToken created already');
 
@@ -3120,7 +3555,7 @@ contract Factory is ContextUpgradeSafe, Configurable, Constants {
     }
     event CreateMappingToken(uint mainChainId, address indexed token, address indexed deployer, string name, string symbol, uint8 decimals, uint cap, address indexed mappingToken);
     
-    function createMappingToken_(uint mainChainId, address token, address deployer, string memory name, string memory symbol, uint8 decimals, uint cap) public payable governance returns (address mappingToken) {
+    function createMappingToken_(uint mainChainId, address token, address deployer, string memory name, string memory symbol, uint8 decimals, uint cap) public payable onlyAuthorty returns (address mappingToken) {
         return _createMappingToken(mainChainId, token, deployer, name, symbol, decimals, cap);
     }
     
